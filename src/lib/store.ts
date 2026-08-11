@@ -49,6 +49,7 @@ export interface AppSettings {
   reducedMotion: boolean;
   showDevBanner: boolean;
   soundEnabled: boolean;
+  soundVolume: number; // 0.0–1.0, user-adjustable master volume multiplier
   basemap: "dark" | "light" | "satellite" | "topo";
   highlightLatest: boolean;
   units: "metric";
@@ -75,6 +76,11 @@ interface SeismoState {
   settings: AppSettings;
   toggleSetting: (k: keyof AppSettings) => void;
   setSetting: <K extends keyof AppSettings>(k: K, v: AppSettings[K]) => void;
+
+  // alarm deduplication: tracks which earthquake IDs have already triggered a sound
+  triggeredAlarms: Set<string>;
+  markAlarmTriggered: (earthquakeId: string) => void;
+  hasAlarmTriggered: (earthquakeId: string) => boolean;
 
   // realtime
   wsConnected: boolean;
@@ -149,6 +155,7 @@ export const useSeismo = create<SeismoState>((set) => ({
     reducedMotion: Boolean(prefersReduced),
     showDevBanner: true,
     soundEnabled: true,
+    soundVolume: 0.7, // default 70% master volume
     basemap: "dark",
     highlightLatest: true,
     units: "metric",
@@ -157,6 +164,21 @@ export const useSeismo = create<SeismoState>((set) => ({
     set((s) => ({ settings: { ...s.settings, [k]: !s.settings[k] } })),
   setSetting: (k, v) =>
     set((s) => ({ settings: { ...s.settings, [k]: v } })),
+
+  // alarm deduplication — uses a Set to track triggered earthquake IDs
+  triggeredAlarms: new Set<string>(),
+  markAlarmTriggered: (earthquakeId) =>
+    set((s) => {
+      const next = new Set(s.triggeredAlarms);
+      next.add(earthquakeId);
+      // Keep the set bounded — remove oldest entries beyond 200
+      if (next.size > 200) {
+        const first = next.values().next().value;
+        if (first) next.delete(first);
+      }
+      return { triggeredAlarms: next };
+    }),
+  hasAlarmTriggered: (earthquakeId) => get().triggeredAlarms.has(earthquakeId),
 
   wsConnected: false,
   setWsConnected: (b) => set({ wsConnected: b }),

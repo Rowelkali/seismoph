@@ -5,6 +5,8 @@ import { MagnitudeBadge, DepthTag } from "./MagnitudeBadge";
 import { DepthCrossSection } from "./DepthCrossSection";
 import { IntensityScale } from "./IntensityScale";
 import { AiExplainer } from "./AiExplainer";
+import { ShareCard } from "./ShareCard";
+import { AiCaption } from "./AiCaption";
 import { StatusIndicator } from "./StatusIndicator";
 import { formatPHT, formatPHTTime, peisDescription, magLabel } from "@/lib/ui";
 import { haversineKm, bearingDeg, bearingLabel, depthClass } from "@/lib/geo";
@@ -185,6 +187,10 @@ export function DetailPanel({ earthquake, loading, onClose, className }: Props) 
 
           {/* AI explainer */}
           <AiExplainer earthquake={eq} userLocation={userLocation} />
+
+          {/* Share Card + AI Caption — social-media-ready exports */}
+          <ShareCard earthquake={eq} />
+          <AiCaption earthquake={eq} />
         </div>
       </ScrollArea>
 

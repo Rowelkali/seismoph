@@ -54,7 +54,7 @@ export default function Home() {
 
   const { data: selectedFull, loading: selLoading } = useEarthquake(selected?.id ?? null);
   const { data: recent } = useRecentEarthquakes(120);
-  const { trigger: triggerSound } = useAlertSound();
+  const { triggerForEarthquake, audioReady, unlockAudio } = useAlertSound();
   const queryClient = useQueryClient();
 
   const [command, setCommand] = useState<{ action: "reset" | "zoomIn" | "zoomOut"; nonce: number } | null>(null);
@@ -93,6 +93,8 @@ export default function Home() {
   // WebSocket realtime — genuinely new events from the PHIVOLCS 60s poll trigger
   // the pop animation, alert sound, toast notification, AND React Query cache
   // invalidation so the sidebar "Recent Earthquakes" list updates immediately.
+  // Sound respects: enabled setting, user volume, severity-based pattern,
+  // deduplication (same earthquake won't trigger twice).
   const { connected } = useRealtime({
     onCreated: (eq) => {
       pushStreamEvent(eq);
@@ -100,9 +102,12 @@ export default function Home() {
       // map dataset, and analytics dashboard refetch with the new data.
       void queryClient.invalidateQueries({ queryKey: ["earthquakes"] });
       void queryClient.invalidateQueries({ queryKey: ["statistics"] });
-      // Alert sound + toast for new events.
+
+      // Alert sound — severity-based, deduplicated, respects volume + enabled
+      triggerForEarthquake(eq.id, eq.magnitude);
+
+      // Toast notification for significant events
       if (eq.magnitude >= 4.0) {
-        triggerSound(eq.magnitude >= 6 ? "major" : "minor");
         toast.success(`⚠ M${eq.magnitude.toFixed(1)} earthquake detected`, {
           description: eq.locationDescription,
           duration: 8000,
@@ -116,7 +121,7 @@ export default function Home() {
       }
     },
     onAlert: (a) => {
-      triggerSound("major");
+      triggerForEarthquake(a.earthquake.id, a.earthquake.magnitude);
       toast.warning(`🔔 Alert: M${a.earthquake.magnitude.toFixed(1)}`, {
         description: a.earthquake.locationDescription,
         duration: 10000,

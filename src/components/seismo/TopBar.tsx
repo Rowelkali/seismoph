@@ -26,8 +26,9 @@ export function TopBar({ wsConnected, onOpenSearch }: { wsConnected: boolean; on
   const phivolcsState = phivolcsSource?.status === "HEALTHY" ? "live" : phivolcsSource?.status === "DEGRADED" ? "degraded" : phivolcsSource?.status === "DOWN" ? "down" : "unknown";
 
   const soundEnabled = useSeismo((s) => s.settings.soundEnabled);
+  const soundVolume = useSeismo((s) => s.settings.soundVolume);
   const toggleSound = useSeismo((s) => s.setSetting);
-  const { test: testSound } = useAlertSound();
+  const { test: testSound, audioReady, unlockAudio } = useAlertSound();
 
   return (
     <header className="z-30 flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background/90 px-3 backdrop-blur">
@@ -132,19 +133,71 @@ export function TopBar({ wsConnected, onOpenSearch }: { wsConnected: boolean; on
               checked={settings.highlightLatest}
               onCheckedChange={() => toggleSetting("highlightLatest")}
             />
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium">Alert sound</p>
-                <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
-                  Plays an emergency siren when a significant new earthquake (M4.0+) is detected.
-                </p>
+            {/* Alert sound settings with audio-enable workflow + volume slider */}
+            <div className="space-y-2 rounded-md border border-border bg-card/30 p-2.5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium">Alert sound</p>
+                  <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+                    Severity-based alarm: M3+ beep, M5+ siren, M7+ emergency.
+                  </p>
+                </div>
+                <Switch checked={soundEnabled} onCheckedChange={(c) => toggleSound("soundEnabled", c)} aria-label="Alert sound" />
               </div>
-              <div className="flex flex-col items-end gap-1.5">
-                <Switch checked={settings.soundEnabled} onCheckedChange={(c) => toggleSound("soundEnabled", c)} aria-label="Alert sound" />
-                <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={testSound}>
-                  Test
-                </Button>
-              </div>
+
+              {/* Audio enable prompt — shows when browser requires user interaction */}
+              {!audioReady && soundEnabled && (
+                <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2">
+                  <p className="text-[11px] text-amber-400 leading-snug">
+                    🔊 Browser requires interaction to enable sound.
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-1.5 h-7 w-full text-[11px] border-amber-500/40 text-amber-400 hover:bg-amber-500/10"
+                    onClick={unlockAudio}
+                  >
+                    Enable earthquake alert sounds
+                  </Button>
+                </div>
+              )}
+
+              {/* Volume slider */}
+              {soundEnabled && (
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground shrink-0">
+                    Volume
+                  </span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={Math.round(soundVolume * 100)}
+                    onChange={(e) => toggleSound("soundVolume", Number(e.target.value) / 100)}
+                    className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer bg-muted"
+                    style={{
+                      background: `linear-gradient(to right, var(--primary) ${soundVolume * 100}%, var(--muted) ${soundVolume * 100}%)`,
+                    }}
+                    aria-label="Alert volume"
+                  />
+                  <span className="text-[10px] font-mono text-muted-foreground shrink-0 w-8 text-right">
+                    {Math.round(soundVolume * 100)}%
+                  </span>
+                </div>
+              )}
+
+              {/* Test button */}
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 w-full text-[11px]"
+                onClick={testSound}
+              >
+                Test Alert
+              </Button>
+              <p className="text-[10px] text-muted-foreground italic">
+                Test sound — no earthquake detected.
+              </p>
             </div>
             <SettingRow
               label="Development data banner"
