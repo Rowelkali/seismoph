@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { useSeismo } from "@/lib/store";
-import { useRecentEarthquakes, useRealtime, useEarthquake } from "@/hooks/use-seismo-data";
+import { useRealtime, useEarthquake } from "@/hooks/use-seismo-data";
 import { useAlertSound } from "@/hooks/use-alert-sound";
 import { TopBar } from "@/components/seismo/TopBar";
 import { DevDataBanner } from "@/components/seismo/DevDataBanner";
@@ -46,31 +46,35 @@ export default function Home() {
   const pushStreamEvent = useSeismo((s) => s.pushStreamEvent);
   const setWsConnected = useSeismo((s) => s.setWsConnected);
 
-  const { data: recent, asOf } = useRecentEarthquakes(120);
   const { data: selectedFull, loading: selLoading } = useEarthquake(selected?.id ?? null);
   const { trigger: triggerSound } = useAlertSound();
 
   const [command, setCommand] = useState<{ action: "reset" | "zoomIn" | "zoomOut"; nonce: number } | null>(null);
   const [layerOpen, setLayerOpen] = useState(false);
 
-  // Map dataset = recent earthquakes (shown immediately, statically) + any
-  // genuinely new earthquakes from the realtime USGS poll. Recent events do
-  // NOT animate — they just appear as already-present markers. Only NEW events
-  // received via WebSocket (from the 30s USGS poll) trigger the pop animation
-  // + alert sound + toast.
+  // MAP DATASET: Only genuinely NEW earthquakes appear on the map.
+  // The map starts EMPTY. Past/recent earthquakes are NOT shown on the map —
+  // they're available in the sidebar list for browsing. Only earthquakes
+  // received via the realtime WebSocket (from the 30s USGS poll) appear on the
+  // map, with the pop animation + alert sound.
+  // Exception: when a user clicks an earthquake in the sidebar list to inspect
+  // it, that selected earthquake is temporarily shown on the map (so they can
+  // see where it is) + the camera flies to it.
   const mapEarthquakes = useMemo(() => {
     const seen = new Set<string>();
     const merged: EarthquakeEvent[] = [];
-    // Newest first: realtime stream (new events)
+    // New events from the realtime stream (these are the "pop-up" events)
     for (const e of stream) {
       if (!seen.has(e.id)) { seen.add(e.id); merged.push(e); }
     }
-    // Then the recent catalog (already-present, no animation)
-    for (const e of recent) {
-      if (!seen.has(e.id)) { seen.add(e.id); merged.push(e); }
+    // Temporarily include the selected earthquake so its marker shows when
+    // the user inspects it from the sidebar list.
+    if (selected && !seen.has(selected.id)) {
+      merged.push(selected);
+      seen.add(selected.id);
     }
     return merged;
-  }, [recent, stream]);
+  }, [stream, selected]);
 
   // WebSocket realtime — ONLY genuinely new events from the USGS poll trigger
   // the pop animation, alert sound, and toast notification.
@@ -202,7 +206,7 @@ export default function Home() {
             "absolute bottom-3 left-3 right-3 z-20 md:left-[21rem]",
             hasSelection ? "md:right-[26rem]" : "md:right-3",
           )}>
-            <EventStream events={stream.length > 0 ? stream : recent.slice(0, 12)} onPick={(eq) => select(eq)} connected={connected} />
+            <EventStream events={stream} onPick={(eq) => select(eq)} connected={connected} />
           </div>
         )}
 
