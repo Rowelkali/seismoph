@@ -52,3 +52,14 @@ prompt
 server.log
 # Skills directory
 /skills/
+# SEISMO PH — additional ignores
+.env
+.env.local
+dev.log
+server.log
+rt.log
+rt-wrapper.log
+*.png
+db/*.db
+db/*.db-journal
+prisma/schema-sqlite.prisma
