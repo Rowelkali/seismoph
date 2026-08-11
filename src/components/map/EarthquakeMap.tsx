@@ -159,7 +159,10 @@ const SEV_HEX: Record<string, string> = {
   great: "#b8271a",
 };
 
-const PH_FIT_BOUNDS: LngLatBoundsLike = [117.5, 4.5, 127.5, 21.0];
+// Full Philippine archipelago bounds — wide enough to include Palawan (west),
+// Batanes (north), and Tawi-Tawi (south). Used for fitBounds() so the entire
+// country is always visible when zooming out / resetting the view.
+const PH_FIT_BOUNDS: LngLatBoundsLike = [115.5, 4.0, 127.5, 21.7];
 const MAX_MARKERS = 150;
 
 export function EarthquakeMap({
@@ -204,10 +207,14 @@ export function EarthquakeMap({
       container: containerRef.current,
       style: activeBasemap.style as MLMap["style"],
       center: [PH_CENTER.lon, PH_CENTER.lat],
-      zoom: 5.2,
+      zoom: 4.8,
       pitch: 0,
       bearing: 0,
-      maxBounds: [[110, 0], [135, 26]],
+      // NO maxBounds — it prevents zoom-out past the bounds edge, which traps
+      // the user at a zoom level where they can't see the full Philippines.
+      // Instead we use minZoom/maxZoom for free zooming with sensible limits.
+      minZoom: 3,        // zoom out to see all of SE Asia + Philippines
+      maxZoom: 15,       // zoom in limit (performance + detail)
       attributionControl: { compact: true },
       cooperativeGestures: false,
       antialias: !dataSaver,
@@ -275,8 +282,8 @@ export function EarthquakeMap({
       // can be unreliable in some browser environments, keeping styleLoaded=false
       // forever. HTML overlays have no such dependency.
 
-      // Initial fit
-      map.fitBounds(PH_FIT_BOUNDS, { padding: 28, pitch: 0 });
+      // Initial fit — show the FULL Philippine archipelago on load.
+      map.fitBounds(PH_FIT_BOUNDS, { padding: 40, pitch: 0 });
     });
 
     return () => {
@@ -555,7 +562,8 @@ export function EarthquakeMap({
     const map = mapRef.current;
     if (!map || !command) return;
     if (command.action === "reset") {
-      map.fitBounds(PH_FIT_BOUNDS, { padding: 28, pitch: 0, bearing: 0, duration: reducedMotion ? 0 : 900 });
+      // Reset = fit the FULL Philippine archipelago (zoom out to see all islands)
+      map.fitBounds(PH_FIT_BOUNDS, { padding: 40, pitch: 0, bearing: 0, duration: reducedMotion ? 0 : 900 });
     } else if (command.action === "zoomIn") {
       map.zoomIn({ duration: 250 });
     } else if (command.action === "zoomOut") {
