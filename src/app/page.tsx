@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { useSeismo } from "@/lib/store";
 import { useRecentEarthquakes, useRealtime, useEarthquake } from "@/hooks/use-seismo-data";
@@ -20,7 +20,7 @@ import { SafetyPanel } from "@/components/panels/SafetyPanel";
 import { AboutPanel } from "@/components/panels/AboutPanel";
 import type { EarthquakeEvent } from "@/lib/types";
 import {
-  Plus, Minus, Mountain, Compass, X, Layers as LayersIcon, Radio, Play,
+  Plus, Minus, Mountain, Compass, X, Layers as LayersIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -34,9 +34,6 @@ const EarthquakeMap = dynamic(
 const MAP_VIEWS = new Set(["live", "earthquakes", "history", "locations", "alerts"]);
 const OVERLAY_VIEWS = new Set(["analytics", "safety", "about"]);
 
-const REPLAY_COUNT = 12; // how many recent events to animate on load
-const REPLAY_INTERVAL_MS = 700;
-
 export default function Home() {
   const view = useSeismo((s) => s.view);
   const setView = useSeismo((s) => s.setView);
@@ -48,9 +45,6 @@ export default function Home() {
   const stream = useSeismo((s) => s.stream);
   const pushStreamEvent = useSeismo((s) => s.pushStreamEvent);
   const setWsConnected = useSeismo((s) => s.setWsConnected);
-  const popped = useSeismo((s) => s.popped);
-  const pushPopped = useSeismo((s) => s.pushPopped);
-  const setPopped = useSeismo((s) => s.setPopped);
 
   const { data: recent, asOf } = useRecentEarthquakes(120);
   const { data: selectedFull, loading: selLoading } = useEarthquake(selected?.id ?? null);
@@ -58,67 +52,32 @@ export default function Home() {
 
   const [command, setCommand] = useState<{ action: "reset" | "zoomIn" | "zoomOut"; nonce: number } | null>(null);
   const [layerOpen, setLayerOpen] = useState(false);
-  const [replaying, setReplaying] = useState(false);
-  const replayDoneRef = useRef(false);
 
-  // Merge realtime stream events into the map dataset (most recent first, dedup).
-  // The map shows `popped` (events that have "appeared" via replay or realtime)
-  // plus any realtime stream events, plus the rest of recent as already-present.
+  // Map dataset = recent earthquakes (shown immediately, statically) + any
+  // genuinely new earthquakes from the realtime USGS poll. Recent events do
+  // NOT animate — they just appear as already-present markers. Only NEW events
+  // received via WebSocket (from the 30s USGS poll) trigger the pop animation
+  // + alert sound + toast.
   const mapEarthquakes = useMemo(() => {
     const seen = new Set<string>();
     const merged: EarthquakeEvent[] = [];
-    // Newest first: realtime stream
+    // Newest first: realtime stream (new events)
     for (const e of stream) {
       if (!seen.has(e.id)) { seen.add(e.id); merged.push(e); }
     }
-    // Then popped (replayed) events
-    for (const e of popped) {
-      if (!seen.has(e.id)) { seen.add(e.id); merged.push(e); }
-    }
-    // Then the rest of recent
+    // Then the recent catalog (already-present, no animation)
     for (const e of recent) {
       if (!seen.has(e.id)) { seen.add(e.id); merged.push(e); }
     }
     return merged;
-  }, [recent, stream, popped]);
+  }, [recent, stream]);
 
-  // --- Live replay: animate the most recent real earthquakes appearing ---
-  const runReplay = useCallback(() => {
-    if (recent.length === 0) return;
-    setReplaying(true);
-    setPopped([]); // clear, then add one-by-one
-    // Take the most recent REPLAY_COUNT events, oldest→newest, so the newest
-    // appears last (most dramatic).
-    const batch = recent.slice(0, REPLAY_COUNT).reverse();
-    let i = 0;
-    const tick = () => {
-      if (i >= batch.length) {
-        setReplaying(false);
-        return;
-      }
-      const eq = batch[i];
-      pushPopped(eq);
-      // Sound for significant events during replay.
-      if (eq.magnitude >= 4.5) triggerSound(eq.magnitude >= 6 ? "major" : "minor");
-      i++;
-      setTimeout(tick, REPLAY_INTERVAL_MS);
-    };
-    setTimeout(tick, 400);
-  }, [recent, setPopped, pushPopped, triggerSound]);
-
-  // Auto-run replay once on first load of real data.
-  useEffect(() => {
-    if (replayDoneRef.current || recent.length === 0) return;
-    replayDoneRef.current = true;
-    runReplay();
-  }, [recent, runReplay]);
-
-  // WebSocket realtime — genuine new events from USGS poll.
+  // WebSocket realtime — ONLY genuinely new events from the USGS poll trigger
+  // the pop animation, alert sound, and toast notification.
   const { connected } = useRealtime({
     onCreated: (eq) => {
       pushStreamEvent(eq);
-      pushPopped(eq);
-      // Alert sound + toast for significant events.
+      // Alert sound + toast for new events.
       if (eq.magnitude >= 4.0) {
         triggerSound(eq.magnitude >= 6 ? "major" : "minor");
         toast.success(`⚠ M${eq.magnitude.toFixed(1)} earthquake detected`, {
@@ -197,29 +156,9 @@ export default function Home() {
           </aside>
         )}
 
-        {/* Layer control + Replay button (top-right) */}
+        {/* Layer control (top-right) */}
         {isMap && (
           <div className="absolute right-3 top-3 z-20 flex flex-col items-end gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={runReplay}
-              disabled={replaying}
-              className="glass-strong h-9 gap-1.5 rounded-lg border-border px-3 text-xs"
-              title="Replay the most recent real earthquakes appearing on the map"
-            >
-              {replaying ? (
-                <>
-                  <Radio className="h-3.5 w-3.5 animate-seismo-blink text-primary" />
-                  <span className="font-mono uppercase tracking-wider">Live…</span>
-                </>
-              ) : (
-                <>
-                  <Play className="h-3.5 w-3.5 text-primary" />
-                  <span>Replay recent</span>
-                </>
-              )}
-            </Button>
             <Button
               variant="outline"
               size="icon"
