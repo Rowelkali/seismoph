@@ -102,7 +102,7 @@ export class UsgsAdapter implements EarthquakeSourceAdapter {
    */
   constructor(private opts?: { since?: Date; days?: number; minMagnitude?: number }) {}
 
-  async fetch(): Promise<FetchResult> {
+  async fetch(opts?: { since?: Date; days?: number; minMagnitude?: number } & import("./source").AdapterFetchOptions): Promise<FetchResult> {
     const days = this.opts?.days ?? 90;
     const minMag = this.opts?.minMagnitude ?? 2.5;
     const now = new Date();

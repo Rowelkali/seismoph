@@ -21,9 +21,6 @@ export function TopBar({ wsConnected, onOpenSearch }: { wsConnected: boolean; on
   const { data: sources } = useSources();
   const devActive = sources.some((s) => s.name === "DEV-SEED" && s.status === "HEALTHY");
 
-  const usgsSource = sources.find((s) => s.name === "USGS");
-  const usgsState = usgsSource?.status === "HEALTHY" ? "live" : usgsSource?.status === "DEGRADED" ? "degraded" : usgsSource?.status === "DOWN" ? "down" : "unknown";
-
   const phivolcsSource = sources.find((s) => s.name === "DOST-PHIVOLCS");
   const phivolcsState = phivolcsSource?.status === "HEALTHY" ? "live" : phivolcsSource?.status === "DEGRADED" ? "degraded" : phivolcsSource?.status === "DOWN" ? "down" : "unknown";
 
@@ -57,11 +54,7 @@ export function TopBar({ wsConnected, onOpenSearch }: { wsConnected: boolean; on
             DEV DATA
           </span>
         )}
-        <span className="hidden items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground lg:flex">
-          USGS:
-          <StatusIndicator status={usgsState} label={usgsState === "live" ? "HEALTHY" : usgsState.toUpperCase()} />
-        </span>
-        <span className="hidden items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground xl:flex">
+        <span className="hidden items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground sm:flex">
           PHIVOLCS:
           <StatusIndicator status={phivolcsState} label={phivolcsState === "live" ? "HEALTHY" : phivolcsState.toUpperCase()} />
         </span>

@@ -1,23 +1,23 @@
 // SEISMO PH — Database seed.
 //
 // Seeds REAL data:
-//   - Locations: real PH regions, provinces, cities/municipalities (accurate coordinates)
-//   - DataSources: USGS (HEALTHY, live), DOST-PHIVOLCS (UNKNOWN until configured)
-//   - Earthquakes: REAL USGS earthquakes for the Philippine region, last 90 days,
-//     ingested live via the FDSN-WS public API. NO synthetic fixtures.
+//   - Locations: real PH regions, provinces, cities/municipalities
+//   - DataSources: DOST-PHIVOLCS (PRIMARY, HEALTHY, live), USGS (legacy/backup, OFFLINE)
+//   - Earthquakes: REAL PHIVOLCS earthquake bulletins fetched live from
+//     earthquake.phivolcs.dost.gov.ph (the latest ~40 events). NO synthetic data.
 //
 // Run:  bun prisma/seed.ts
 
 import { db } from "../src/lib/db";
 import { logger } from "../src/lib/logger";
 import { ingestBatch } from "../src/lib/ingestion/ingest";
-import { UsgsAdapter } from "../src/lib/ingestion/usgs";
+import { PhivolcsAdapter } from "../src/lib/ingestion/phivolcs";
 import { PH_CITIES, PH_REGIONS } from "../src/lib/ingestion/seed-data";
 
 async function main() {
-  logger.info("seed.start", { source: "USGS (real)" });
+  logger.info("seed.start", { source: "DOST-PHIVOLCS (real)" });
 
-  // --- Wipe all earthquake data (removes any prior DEV-SEED fixtures) -------
+  // --- Wipe all earthquake data ---
   await db.notificationEvent.deleteMany();
   await db.intensityReport.deleteMany();
   await db.earthquake.deleteMany();
@@ -25,28 +25,28 @@ async function main() {
   await db.alertSubscription.deleteMany();
   await db.dataSource.deleteMany();
 
-  // --- DataSources ---------------------------------------------------------
+  // --- DataSources: PHIVOLCS is now PRIMARY and live ---
   await db.dataSource.create({
     data: {
-      name: "USGS",
-      endpoint: "https://earthquake.usgs.gov/fdsnws/event/1/query",
+      name: "DOST-PHIVOLCS",
+      endpoint: "https://earthquake.phivolcs.dost.gov.ph/",
       status: "HEALTHY",
-      version: "fdsnws-event-1",
+      version: "bulletin-html-1",
       attribution:
-        "U.S. Geological Survey (USGS), Earthquake Hazards Program — https://earthquake.usgs.gov. Real-time data retrieved via the FDSN-WS public API.",
+        "DOST-PHIVOLCS — Philippine Institute of Volcanology and Seismology. Real-time earthquake bulletins from earthquake.phivolcs.dost.gov.ph.",
       lastSuccessAt: new Date(),
     },
   });
   await db.dataSource.create({
     data: {
-      name: "DOST-PHIVOLCS",
-      status: "UNKNOWN",
-      attribution:
-        "DOST-PHIVOLCS — Department of Science and Technology, Philippine Institute of Volcanology and Seismology. Data © PHIVOLCS/DOST. The Philippine-authoritative source; integration pending a confirmed authorized endpoint.",
+      name: "USGS",
+      endpoint: "https://earthquake.usgs.gov/fdsnws/event/1/query",
+      status: "OFFLINE",
+      attribution: "U.S. Geological Survey (USGS). Disabled — platform now uses DOST-PHIVOLCS as the primary source.",
     },
   });
 
-  // --- Locations (real PH geography) ---------------------------------------
+  // --- Locations (real PH geography) ---
   let locCount = 0;
   for (const region of PH_REGIONS) {
     const regionCities = PH_CITIES.filter((c) => c.region === region.code);
@@ -68,70 +68,42 @@ async function main() {
   }
   for (const c of PH_CITIES) {
     await db.location.create({
-      data: {
-        name: c.name,
-        type: c.type,
-        region: c.region,
-        province: c.province,
-        latitude: c.lat,
-        longitude: c.lon,
-        population: c.population ?? null,
-      },
+      data: { name: c.name, type: c.type, region: c.region, province: c.province, latitude: c.lat, longitude: c.lon, population: c.population ?? null },
     });
     locCount++;
   }
   logger.info("seed.locations", { count: locCount });
 
-  // --- REAL earthquakes from USGS (last 90 days, PH bounding box) -----------
-  console.log("Fetching real earthquakes from USGS (last 90 days, Philippine region)…");
-  const adapter = new UsgsAdapter({ days: 90, minMagnitude: 2.5 });
-  const result = await adapter.fetch();
+  // --- REAL earthquakes from PHIVOLCS (latest ~40 bulletins) ---
+  console.log("Fetching real earthquake bulletins from PHIVOLCS (earthquake.phivolcs.dost.gov.ph)…");
+  const adapter = new PhivolcsAdapter();
+  const result = await adapter.fetch({ maxEvents: 40 });
 
   if (!result.ok || result.events.length === 0) {
-    logger.error("seed.usgs.failed", { error: result.error });
-    console.error(`\n✗ Could not fetch real USGS data: ${result.error}`);
-    console.error("  Check network connectivity to earthquake.usgs.gov and re-run.\n");
+    logger.error("seed.phivolcs.failed", { error: result.error });
+    console.error(`\n✗ Could not fetch PHIVOLCS data: ${result.error}`);
+    console.error("  Check network connectivity to earthquake.phivolcs.dost.gov.ph and re-run.\n");
     process.exit(1);
   }
 
   const outcome = await ingestBatch(result.events);
 
-  // Update source health with the latest event's external id.
-  const latest = outcome.created[outcome.created.length - 1] ?? outcome.updated[outcome.updated.length - 1];
+  // Update source health
+  const latest = outcome.created[outcome.created.length - 1];
   if (latest) {
     await db.dataSource.update({
-      where: { name: "USGS" },
-      data: {
-        lastSuccessAt: new Date(),
-        lastEventExternalId: latest.externalId,
-        status: "HEALTHY",
-      },
+      where: { name: "DOST-PHIVOLCS" },
+      data: { lastSuccessAt: new Date(), lastEventExternalId: latest.externalId, status: "HEALTHY" },
     });
   }
 
   const total = await db.earthquake.count();
-  logger.info("seed.complete", {
-    earthquakes: total,
-    created: outcome.created.length,
-    updated: outcome.updated.length,
-    unchanged: outcome.unchanged,
-    locations: locCount,
-  });
-  console.log(`\n✓ SEISMO PH seed complete — REAL DATA`);
+  console.log(`\n✓ SEISMO PH seed complete — REAL PHIVOLCS DATA`);
   console.log(`  Locations:      ${locCount} (real PH geography)`);
-  console.log(`  Earthquakes:    ${total} (REAL USGS data, last 90 days)`);
+  console.log(`  Earthquakes:    ${total} (REAL PHIVOLCS bulletins)`);
   console.log(`  Created:        ${outcome.created.length}`);
-  console.log(`  Updated:        ${outcome.updated.length}`);
   console.log(`  Rejected:       ${outcome.rejected.length}`);
-  console.log(`  Data sources:   USGS (HEALTHY, live), DOST-PHIVOLCS (UNKNOWN)\n`);
+  console.log(`  Data sources:   DOST-PHIVOLCS (HEALTHY, primary), USGS (OFFLINE)\n`);
 }
 
-main()
-  .catch((e) => {
-    logger.error("seed.failed", { error: String(e) });
-    console.error(e);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await db.$disconnect();
-  });
+main().catch((e) => { console.error(e); process.exit(1); }).finally(async () => { await db.$disconnect(); });

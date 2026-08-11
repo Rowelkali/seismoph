@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { useSeismo } from "@/lib/store";
-import { useRealtime, useEarthquake } from "@/hooks/use-seismo-data";
+import { useRealtime, useEarthquake, useRecentEarthquakes } from "@/hooks/use-seismo-data";
 import { useAlertSound } from "@/hooks/use-alert-sound";
 import { TopBar } from "@/components/seismo/TopBar";
 import { DevDataBanner } from "@/components/seismo/DevDataBanner";
@@ -47,36 +47,31 @@ export default function Home() {
   const setWsConnected = useSeismo((s) => s.setWsConnected);
 
   const { data: selectedFull, loading: selLoading } = useEarthquake(selected?.id ?? null);
+  const { data: recent } = useRecentEarthquakes(120);
   const { trigger: triggerSound } = useAlertSound();
 
   const [command, setCommand] = useState<{ action: "reset" | "zoomIn" | "zoomOut"; nonce: number } | null>(null);
   const [layerOpen, setLayerOpen] = useState(false);
 
-  // MAP DATASET: Only genuinely NEW earthquakes appear on the map.
-  // The map starts EMPTY. Past/recent earthquakes are NOT shown on the map —
-  // they're available in the sidebar list for browsing. Only earthquakes
-  // received via the realtime WebSocket (from the 30s USGS poll) appear on the
-  // map, with the pop animation + alert sound.
-  // Exception: when a user clicks an earthquake in the sidebar list to inspect
-  // it, that selected earthquake is temporarily shown on the map (so they can
-  // see where it is) + the camera flies to it.
+  // MAP DATASET: Recent PHIVOLCS earthquakes shown on the map + any genuinely
+  // new earthquakes from the realtime poll. Recent events appear immediately as
+  // static markers. NEW events (from the 60s PHIVOLCS poll) trigger the pop
+  // animation + alert sound + toast.
   const mapEarthquakes = useMemo(() => {
     const seen = new Set<string>();
     const merged: EarthquakeEvent[] = [];
-    // New events from the realtime stream (these are the "pop-up" events)
+    // Newest first: realtime stream (new events)
     for (const e of stream) {
       if (!seen.has(e.id)) { seen.add(e.id); merged.push(e); }
     }
-    // Temporarily include the selected earthquake so its marker shows when
-    // the user inspects it from the sidebar list.
-    if (selected && !seen.has(selected.id)) {
-      merged.push(selected);
-      seen.add(selected.id);
+    // Then the recent catalog (already-present markers)
+    for (const e of recent) {
+      if (!seen.has(e.id)) { seen.add(e.id); merged.push(e); }
     }
     return merged;
-  }, [stream, selected]);
+  }, [recent, stream]);
 
-  // WebSocket realtime — ONLY genuinely new events from the USGS poll trigger
+  // WebSocket realtime — genuinely new events from the PHIVOLCS 60s poll trigger
   // the pop animation, alert sound, and toast notification.
   const { connected } = useRealtime({
     onCreated: (eq) => {
@@ -206,7 +201,7 @@ export default function Home() {
             "absolute bottom-3 left-3 right-3 z-20 md:left-[21rem]",
             hasSelection ? "md:right-[26rem]" : "md:right-3",
           )}>
-            <EventStream events={stream} onPick={(eq) => select(eq)} connected={connected} />
+            <EventStream events={stream.length > 0 ? stream : recent.slice(0, 12)} onPick={(eq) => select(eq)} connected={connected} />
           </div>
         )}
 
@@ -250,8 +245,8 @@ export default function Home() {
       {/* Sticky attribution footer */}
       <footer className="mt-auto flex h-7 shrink-0 items-center justify-between gap-2 border-t border-border bg-background/95 px-3 text-[10px] text-muted-foreground">
         <span className="truncate">
-          Earthquake data: <strong className="text-foreground">USGS</strong> (live, real-time) · PHIVOLCS adapter ready for production.
-          Basemap © OpenStreetMap, © CARTO · Terrain: AWS.
+          Earthquake data: <strong className="text-foreground">DOST-PHIVOLCS</strong> (live, real-time — earthquake.phivolcs.dost.gov.ph).
+          Basemap © OpenStreetMap, © CARTO · Faults: official PHIVOLCS GIS.
         </span>
         <span className="hidden shrink-0 items-center gap-2 sm:flex">
           <span>Not an official government service.</span>

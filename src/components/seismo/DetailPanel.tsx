@@ -90,13 +90,13 @@ export function DetailPanel({ earthquake, loading, onClose, className }: Props) 
               <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-400">
                 Development fixture
               </span>
-            ) : eq.source === "USGS" ? (
+            ) : eq.source === "DOST-PHIVOLCS" ? (
               <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-400">
-                USGS · Live
+                DOST-PHIVOLCS · Live
               </span>
             ) : (
-              <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-400">
-                DOST-PHIVOLCS
+              <span className="rounded bg-muted/40 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                {eq.source}
               </span>
             )}
             <StatusIndicator status="live" label={eq.status} />

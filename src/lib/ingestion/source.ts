@@ -45,6 +45,13 @@ export interface FetchResult {
   serverLastUpdated?: Date;
 }
 
+export interface AdapterFetchOptions {
+  /** Max number of new events to fetch (adapter-specific). */
+  maxEvents?: number;
+  /** Set of externalIds already in the DB — adapters should skip re-fetching these. */
+  knownIds?: Set<string>;
+}
+
 export interface EarthquakeSourceAdapter {
   readonly name: string;
   readonly source: EarthquakeSource;
@@ -54,5 +61,5 @@ export interface EarthquakeSourceAdapter {
    * Implementations MUST be resilient: never throw — return ok:false with an
    * error message instead, so the pipeline can mark the source degraded.
    */
-  fetch(): Promise<FetchResult>;
+  fetch(opts?: AdapterFetchOptions): Promise<FetchResult>;
 }
