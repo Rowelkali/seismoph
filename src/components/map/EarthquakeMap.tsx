@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useMemo } from "react";
-import { Map as MLMap, Marker, LngLatBoundsLike, MapMouseEvent } from "maplibre-gl";
+import { Map as MLMap, Marker, LngLat, LngLatBoundsLike, MapMouseEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { EarthquakeEvent } from "@/lib/types";
 import { PH_CITIES } from "@/lib/ingestion/seed-data";
@@ -134,33 +134,10 @@ export function EarthquakeMap({
         }
       }
 
-      // --- faults as a GeoJSON line layer (simple, static data) ---
-      map.addSource("faults", {
-        type: "geojson",
-        data: {
-          type: "FeatureCollection",
-          features: FAULTS.map((f) => ({
-            type: "Feature",
-            geometry: { type: "LineString", coordinates: f.coordinates },
-            properties: { name: f.name, kind: f.type },
-          })),
-        },
-      });
-      map.addLayer({
-        id: "faults-line",
-        type: "line",
-        source: "faults",
-        layout: { visibility: layers.faults ? "visible" : "none", "line-cap": "round", "line-join": "round" },
-        paint: {
-          "line-color": ["match", ["get", "kind"], "TRENCH", "#e07b5a", "#f5a623"],
-          "line-width": ["interpolate", ["linear"], ["zoom"], 4, 0.8, 8, 1.6, 12, 3],
-          "line-opacity": 0.7,
-          "line-dasharray": [2, 1.5],
-        },
-      });
-
-      // --- cities as HTML markers (reliable, no worker dependency) ---
-      // City markers are created in a separate effect below.
+      // Note: Faults are rendered as HTML SVG overlays (see faults effect below),
+      // NOT as a GeoJSON layer. GeoJSON sources require the WebGL worker which
+      // can be unreliable in some browser environments, keeping styleLoaded=false
+      // forever. HTML overlays have no such dependency.
 
       // Initial fit
       map.fitBounds(PH_BOUNDS, { padding: 28, pitch: 0 });
@@ -277,11 +254,87 @@ export function EarthquakeMap({
     apply();
   }, [layers.cities]);
 
-  // ---- faults visibility ----
+  // ---- faults as HTML SVG overlay ----
+  // Uses an SVG element positioned over the map. Polylines are projected from
+  // lng/lat to screen pixels and updated on map move/zoom. This avoids the
+  // GeoJSON worker dependency that was keeping styleLoaded=false.
+  const faultsOverlayRef = useRef<SVGSVGElement | null>(null);
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !map.getLayer("faults-line")) return;
-    map.setLayoutProperty("faults-line", "visibility", layers.faults ? "visible" : "none");
+    const container = containerRef.current;
+    if (!map || !container) return;
+
+    // Only create/update the overlay when the map is ready.
+    const setup = () => {
+      // Create SVG overlay if not yet created
+      if (!faultsOverlayRef.current) {
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.style.cssText = "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;";
+        container.appendChild(svg);
+        faultsOverlayRef.current = svg;
+      }
+      const svg = faultsOverlayRef.current;
+      if (!svg) return;
+
+      const update = () => {
+        svg.innerHTML = "";
+        svg.style.display = layers.faults ? "" : "none";
+        if (!layers.faults) return;
+        try {
+          const w = container.clientWidth;
+          const h = container.clientHeight;
+          svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+          for (const fault of FAULTS) {
+            const pts: string[] = [];
+            for (const [lon, lat] of fault.coordinates) {
+              const proj = map.project(new LngLat(lon, lat));
+              if (Number.isFinite(proj.x) && Number.isFinite(proj.y)) {
+                pts.push(`${proj.x.toFixed(1)},${proj.y.toFixed(1)}`);
+              }
+            }
+            if (pts.length < 2) continue;
+            const line = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+            line.setAttribute("points", pts.join(" "));
+            line.setAttribute("fill", "none");
+            line.setAttribute("stroke", fault.type === "TRENCH" ? "#e07b5a" : "#f5a623");
+            line.setAttribute("stroke-width", "1.5");
+            line.setAttribute("stroke-opacity", "0.6");
+            line.setAttribute("stroke-dasharray", "4 3");
+            line.setAttribute("stroke-linecap", "round");
+            line.setAttribute("stroke-linejoin", "round");
+            svg.appendChild(line);
+          }
+        } catch {
+          /* map not ready yet */
+        }
+      };
+
+      update();
+      map.on("move", update);
+      map.on("zoom", update);
+      // Store cleanup on the svg element
+      (svg as unknown as { _cleanup?: () => void })._cleanup = () => {
+        map.off("move", update);
+        map.off("zoom", update);
+      };
+    };
+
+    // Run setup — if map not loaded yet, wait for it
+    if (map.loaded() || map.isStyleLoaded()) {
+      setup();
+    } else {
+      map.once("load", setup);
+    }
+
+    return () => {
+      const svg = faultsOverlayRef.current;
+      if (svg) {
+        const cleanup = (svg as unknown as { _cleanup?: () => void })._cleanup;
+        if (cleanup) cleanup();
+        svg.remove();
+        faultsOverlayRef.current = null;
+      }
+    };
   }, [layers.faults]);
 
   // ---- terrain toggle ----
