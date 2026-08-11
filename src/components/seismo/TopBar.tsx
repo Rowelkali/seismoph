@@ -20,8 +20,11 @@ export function TopBar({ wsConnected, onOpenSearch }: { wsConnected: boolean; on
   const { data: sources } = useSources();
   const devActive = sources.some((s) => s.name === "DEV-SEED" && s.status === "HEALTHY");
 
-  const sourceStatus = sources.find((s) => s.name === "DOST-PHIVOLCS");
-  const phivolcsState = sourceStatus?.status === "HEALTHY" ? "live" : sourceStatus?.status === "DEGRADED" ? "degraded" : sourceStatus?.status === "DOWN" ? "down" : "unknown";
+  const usgsSource = sources.find((s) => s.name === "USGS");
+  const usgsState = usgsSource?.status === "HEALTHY" ? "live" : usgsSource?.status === "DEGRADED" ? "degraded" : usgsSource?.status === "DOWN" ? "down" : "unknown";
+
+  const phivolcsSource = sources.find((s) => s.name === "DOST-PHIVOLCS");
+  const phivolcsState = phivolcsSource?.status === "HEALTHY" ? "live" : phivolcsSource?.status === "DEGRADED" ? "degraded" : phivolcsSource?.status === "DOWN" ? "down" : "unknown";
 
   return (
     <header className="z-30 flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background/90 px-3 backdrop-blur">
@@ -50,6 +53,10 @@ export function TopBar({ wsConnected, onOpenSearch }: { wsConnected: boolean; on
           </span>
         )}
         <span className="hidden items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground lg:flex">
+          USGS:
+          <StatusIndicator status={usgsState} label={usgsState === "live" ? "HEALTHY" : usgsState.toUpperCase()} />
+        </span>
+        <span className="hidden items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground xl:flex">
           PHIVOLCS:
           <StatusIndicator status={phivolcsState} label={phivolcsState === "live" ? "HEALTHY" : phivolcsState.toUpperCase()} />
         </span>

@@ -26,13 +26,15 @@ export function AboutPanel({ className }: { className?: string }) {
               SEISMO PH is an information visualization service that presents Philippine earthquake
               activity on an interactive 3D map with real-time updates, a historical explorer, analytics,
               configurable alerts, and an educational AI explainer. It is designed to provide a
-              substantially better user experience for exploring earthquake information while clearly
-              identifying <strong>DOST-PHIVOLCS</strong> as the authoritative data source.
+              substantially better user experience for exploring earthquake information.
             </p>
             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-              It does <strong>not</strong> replace PHIVOLCS. It does not predict earthquakes. It does not
-              generate emergency warnings. Official earthquake information is always distinguished from
-              application-derived visualization, analytics and AI explanations.
+              <strong>Live earthquake data is sourced from the U.S. Geological Survey (USGS) Earthquake
+              Hazards Program</strong> via the public FDSN-WS API — real, authoritative, global seismic
+              data covering the Philippine region. The platform also ships with a documented adapter for
+              <strong> DOST-PHIVOLCS</strong> (the Philippine-authoritative source), activated when a
+              confirmed authorized endpoint is configured. It does <strong>not</strong> replace PHIVOLCS,
+              does not predict earthquakes, and does not generate emergency warnings.
             </p>
           </Card>
 

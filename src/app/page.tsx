@@ -226,7 +226,7 @@ export default function Home() {
       {/* Sticky attribution footer */}
       <footer className="mt-auto flex h-7 shrink-0 items-center justify-between gap-2 border-t border-border bg-background/95 px-3 text-[10px] text-muted-foreground">
         <span className="truncate">
-          Earthquake data: <strong className="text-foreground">DOST-PHIVOLCS</strong> (production) · DEV-SEED fixtures in development.
+          Earthquake data: <strong className="text-foreground">USGS</strong> (live, real-time) · PHIVOLCS adapter ready for production.
           Basemap © OpenStreetMap, © CARTO · Terrain: AWS.
         </span>
         <span className="hidden shrink-0 items-center gap-2 sm:flex">

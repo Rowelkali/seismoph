@@ -1,7 +1,7 @@
 // SEISMO PH — shared domain types. Used across DB, API, WebSocket and frontend.
 // Mirrors the Prisma schema but kept framework-agnostic.
 
-export type EarthquakeSource = "DOST-PHIVOLCS" | "DEV-SEED";
+export type EarthquakeSource = "DOST-PHIVOLCS" | "USGS" | "DEV-SEED";
 
 export type EventType = "TECTONIC" | "VOLCANIC" | "INDUCED" | "UNKNOWN";
 

@@ -65,7 +65,7 @@ export const POST = withErrors(async (req: NextRequest) => {
     `Origin time (UTC): ${eq.originTime.toISOString()}`,
     `Event type: ${eq.eventType}`,
     `Status: ${eq.status}`,
-    `Data source: ${eq.source === "DEV-SEED" ? "Development fixture data (NOT real)" : "DOST-PHIVOLCS"}`,
+    `Data source: ${eq.source === "DEV-SEED" ? "Development fixture data (NOT real)" : eq.source === "USGS" ? "U.S. Geological Survey (USGS) — real, live data" : "DOST-PHIVOLCS"}`,
   ];
 
   if (eq.intensities.length > 0) {

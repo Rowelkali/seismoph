@@ -25,3 +25,21 @@ Stage Summary:
 - Dev server runs on :3000 (no fatal errors); realtime service on :3003 (emitting every ~22s).
 - Agent Browser self-verification (via Caddy :81 so XTransformPort WS forwarding works): page renders desktop+mobile with zero console errors; 3D map loads with attribution; dev-data banner present; live list populated; click→detail panel (depth cross-section SVG + intensities + AI explainer + actions); AI explainer returns grounded text + disclaimer; Analytics charts render; Safety ("Drop, Cover, and Hold On"), About (data sources + disclaimer), Locations search ("davao"→Davao City) all functional; WebSocket realtime delivers fresh events to the live stream (verified 2 events <40s); all REST endpoints 200; sticky footer confirmed (bottom=winH); lint clean.
 - Honest scope notes: sandbox uses SQLite (geodesic distance computed in-app via haversine, not PostGIS); earthquake events are clearly-labeled DEV-SEED fixtures (production uses the documented DOST-PHIVOLCS adapter — set PHIVOLCS_API_URL); fault traces are schematic (production uses licensed PHIVOLCS fault datasets); the platform never claims to predict earthquakes or guarantee safety, and always attributes DOST-PHIVOLCS as the authoritative source.
+
+---
+Task ID: REAL-DATA
+Agent: Z.ai Code (main)
+Task: Replace all synthetic DEV-SEED fixtures with real, live earthquake data.
+
+Work Log:
+- Built real UsgsAdapter (src/lib/ingestion/usgs.ts) querying the USGS FDSN-WS public API (https://earthquake.usgs.gov/fdsnws/event/1/query) for the Philippine bounding box. Real GeoJSON parsing, namespaced externalIds (usgs-<id>), MMI→PEIS intensity conversion where USGS provides instrumental/DYFI intensity (labeled USGS-MMI, never claimed as PHIVOLCS PEIS).
+- Updated seed script to delete ALL prior DEV-SEED fixtures and ingest 536 REAL USGS earthquakes (last 90 days, M2.5+, PH region). Ran successfully — zero synthetic events remain.
+- Rewrote realtime service (mini-services/realtime-service/index.ts) to poll USGS every 60s for genuinely new/updated Philippine events. Removed all synthetic generation logic. Broadcasts real earthquake.created / earthquake.updated events. Alert subscription evaluation with dedup.
+- Purged all DEV-SEED earthquakes (536 + 2 leftover from old generator) and removed DEV-SEED from DataSource table. DB now contains only real USGS data.
+- Updated UI: DevDataBanner now only renders when a DEV-SEED source is actively HEALTHY (it is not — hidden). TopBar shows "USGS: HEALTHY" as primary source indicator. Footer attribution → "Earthquake data: USGS (live, real-time)". About panel documents USGS as live source + PHIVOLCS adapter as documented production seam. DetailPanel shows "USGS · Live" badge for USGS events. AI explainer system prompt references USGS as the real source.
+
+Stage Summary:
+- Database: 536 real USGS earthquakes, 0 synthetic. Sources: USGS=HEALTHY, DOST-PHIVOLCS=UNKNOWN (adapter ready, awaiting confirmed endpoint).
+- Realtime: polls USGS FDSN-WS every 60s for real new events; broadcasts via WebSocket. No synthetic generation.
+- Verified in Agent Browser: page shows real earthquakes (e.g. "M4.6 MB 103km — 13 km ESE of San Miguel, Philippines, REVIEWED"), no DEVELOPMENT DATA banner, USGS:HEALTHY in topbar, footer says "USGS (live, real-time)", detail panel shows real data with depth cross-section. Lint clean, zero console errors.
+- The PHIVOLCS adapter remains as the documented production integration point (set PHIVOLCS_API_URL to activate); USGS is the live working source providing real, authoritative, real-time Philippine earthquake data.

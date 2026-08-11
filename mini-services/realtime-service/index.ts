@@ -1,19 +1,17 @@
 // SEISMO PH — Realtime event service (socket.io) on port 3003.
 //
-// Responsibilities:
-//   - Accept WebSocket connections from the Next.js frontend (via Caddy
-//     XTransformPort=3003; the client connects to io("/?XTransformPort=3003")).
-//   - Periodically generate a NEW clearly-labeled DEV-SEED earthquake, persist
-//     it idempotently through the shared ingestion pipeline, and broadcast
-//     `earthquake.created` to all connected clients.
-//   - Broadcast `system.status` (source health + total events) every 30s.
-//   - Evaluate alert subscriptions against each new event and emit
-//     `alert.triggered` to subscribers whose location+radius+magnitude match.
+// REAL-TIME, LIVE data:
+//   - Polls the USGS FDSN-WS API every 60 seconds for new/updated Philippine
+//     region earthquakes (events updated in the last ~5 minutes).
+//   - Persists genuinely new events through the idempotent ingestion pipeline.
+//   - Broadcasts `earthquake.created` / `earthquake.updated` to all connected
+//     WebSocket clients.
+//   - Broadcasts `system.status` (source health + total events) every 30s.
+//   - Evaluates alert subscriptions against each new event and emits
+//     `alert.triggered` to matching subscribers.
 //
-// This service intentionally re-uses the parent project's Prisma client,
-// shared types, ingestion pipeline and seed-data generator (resolved via the
-// parent node_modules). In production this would be a standalone worker
-// consuming from a Redis/stream backed by the PHIVOLCS ingestion job.
+// This service contains NO synthetic data generation. Every event emitted is a
+// real earthquake reported by USGS.
 
 import { createServer } from "http";
 import { Server } from "socket.io";
@@ -21,18 +19,18 @@ import { config as loadEnv } from "dotenv";
 
 loadEnv({ path: "/home/z/my-project/.env" });
 
-// Resolve shared modules from the parent project.
 import { db } from "../../src/lib/db";
 import { logger } from "../../src/lib/logger";
 import { ingestBatch } from "../../src/lib/ingestion/ingest";
-import { generateEarthquakes } from "../../src/lib/ingestion/seed-data";
+import { UsgsAdapter } from "../../src/lib/ingestion/usgs";
 import { haversineKm } from "../../src/lib/geo";
 import { mapEarthquake } from "../../src/lib/mappers";
 import type { WsServerEvent, EarthquakeEvent } from "../../src/lib/types";
 
 const PORT = 3003;
-const EMIT_INTERVAL_MS = Number(process.env.RT_EMIT_INTERVAL_MS ?? 22_000);
+const POLL_INTERVAL_MS = Number(process.env.RT_POLL_INTERVAL_MS ?? 60_000); // 60s
 const STATUS_INTERVAL_MS = 30_000;
+const LOOKBACK_MS = 5 * 60 * 1000; // fetch events updated in last 5 min
 
 const httpServer = createServer((req, res) => {
   if (req.url === "/__health") {
@@ -51,56 +49,73 @@ const io = new Server(httpServer, {
   pingInterval: 25_000,
 });
 
-let emittedCount = 0;
+let lastPollAt: Date | null = null;
 
-async function emitNewEarthquake() {
+async function pollUsgs() {
   try {
-    // Generate ONE new DEV-SEED event with origin time ~ now.
-    const now = new Date();
-    const from = new Date(now.getTime() - 5_000);
-    const [gen] = generateEarthquakes(1, from, now, (Date.now() & 0xffff) ^ emittedCount);
-    if (!gen) return;
+    const since = lastPollAt ?? new Date(Date.now() - LOOKBACK_MS);
+    // Use a slightly earlier start to avoid boundary misses.
+    const sinceBuffered = new Date(since.getTime() - 30_000);
+    const adapter = new UsgsAdapter({ since: sinceBuffered, minMagnitude: 2.5 });
+    const result = await adapter.fetch();
 
-    const outcome = await ingestBatch([
-      {
-        externalId: gen.externalId,
-        source: "DEV-SEED",
-        originTime: gen.originTime,
-        latitude: gen.latitude,
-        longitude: gen.longitude,
-        depthKm: gen.depthKm,
-        magnitude: gen.magnitude,
-        magnitudeType: gen.magnitudeType,
-        locationDescription: gen.locationDescription,
-        eventType: gen.eventType,
-        status: gen.status,
-        intensities: [],
-      },
-    ]);
-
-    const created = outcome.created[0];
-    if (!created) {
-      // Already existed (idempotent) — nothing new to emit.
+    if (!result.ok) {
+      logger.warn("rt.poll.usgs.failed", { error: result.error }, "realtime-service");
+      await db.dataSource
+        .update({
+          where: { name: "USGS" },
+          data: { status: "DEGRADED", lastFailureAt: new Date() },
+        })
+        .catch(() => undefined);
       return;
     }
 
-    emittedCount++;
-    const event: EarthquakeEvent = created;
+    const outcome = await ingestBatch(result.events);
 
-    const payload: WsServerEvent = { type: "earthquake.created", data: event };
-    io.emit("earthquake.created", payload.data);
-    io.emit("message", payload); // generic envelope for simple clients
-    logger.info("rt.emit.earthquake.created", {
-      externalId: event.externalId,
-      magnitude: event.magnitude,
-      depthKm: event.depthKm,
-      location: event.locationDescription,
-    }, "realtime-service");
+    // Emit created events
+    for (const created of outcome.created) {
+      const event: EarthquakeEvent = created;
+      const payload: WsServerEvent = { type: "earthquake.created", data: event };
+      io.emit("earthquake.created", payload.data);
+      io.emit("message", payload);
+      logger.info("rt.emit.earthquake.created", {
+        externalId: event.externalId,
+        magnitude: event.magnitude,
+        depthKm: event.depthKm,
+        location: event.locationDescription,
+        originTime: event.originTime,
+      }, "realtime-service");
+      await evaluateAlerts(event);
+    }
 
-    // --- Evaluate alert subscriptions ---
-    await evaluateAlerts(event);
+    // Emit updated events (e.g. automatic → reviewed, magnitude revision)
+    for (const updated of outcome.updated) {
+      io.emit("earthquake.updated", mapEarthquake(updated));
+    }
+
+    // Mark source healthy
+    await db.dataSource
+      .update({
+        where: { name: "USGS" },
+        data: {
+          status: "HEALTHY",
+          lastSuccessAt: new Date(),
+          lastEventExternalId: outcome.created[outcome.created.length - 1]?.externalId ?? undefined,
+        },
+      })
+      .catch(() => undefined);
+
+    lastPollAt = new Date();
+    if (outcome.created.length > 0 || outcome.updated.length > 0) {
+      logger.info("rt.poll.summary", {
+        fetched: result.events.length,
+        created: outcome.created.length,
+        updated: outcome.updated.length,
+        unchanged: outcome.unchanged,
+      }, "realtime-service");
+    }
   } catch (e) {
-    logger.error("rt.emit.failed", { error: String(e) }, "realtime-service");
+    logger.error("rt.poll.error", { error: String(e) }, "realtime-service");
   }
 }
 
@@ -113,7 +128,13 @@ async function evaluateAlerts(event: EarthquakeEvent) {
         const d = haversineKm(s.latitude, s.longitude, event.latitude, event.longitude);
         if (d > s.radiusKm) continue;
       }
-      // Match! Record + emit.
+      // Dedup: don't notify twice for the same (subscription, earthquake) pair.
+      const existing = await db.notificationEvent.findFirst({
+        where: { earthquakeId: event.id, subscriptionId: s.id },
+        select: { id: true },
+      });
+      if (existing) continue;
+
       await db.notificationEvent.create({
         data: {
           earthquakeId: event.id,
@@ -160,11 +181,9 @@ async function broadcastStatus() {
 
 io.on("connection", (socket) => {
   logger.info("rt.client.connected", { id: socket.id }, "realtime-service");
-  socket.emit("hello", { service: "seismo-ph-realtime", time: new Date().toISOString() });
+  socket.emit("hello", { service: "seismo-ph-realtime", time: new Date().toISOString(), source: "USGS (live)" });
 
   socket.on("subscribe", (data: { channels?: string[] }) => {
-    // All connected clients receive earthquake.created & system.status by default.
-    // This is a no-op placeholder for future channel-based filtering.
     logger.info("rt.client.subscribe", { id: socket.id, channels: data?.channels }, "realtime-service");
   });
 
@@ -174,22 +193,16 @@ io.on("connection", (socket) => {
 });
 
 httpServer.listen(PORT, () => {
-  logger.info("rt.listen", { port: PORT }, "realtime-service");
+  logger.info("rt.listen", { port: PORT, source: "USGS (live)", pollIntervalMs: POLL_INTERVAL_MS }, "realtime-service");
   console.log(`\n✓ SEISMO PH realtime service on port ${PORT}`);
   console.log(`  WebSocket:  io("/?XTransformPort=${PORT}")`);
-  console.log(`  Emit interval: ${EMIT_INTERVAL_MS}ms (DEV-SEED fixtures)\n`);
+  console.log(`  Source:      USGS FDSN-WS (REAL, live)`);
+  console.log(`  Poll:        every ${POLL_INTERVAL_MS / 1000}s\n`);
 
-  // Mark DEV-SEED healthy on boot.
-  db.dataSource
-    .update({
-      where: { name: "DEV-SEED" },
-      data: { status: "HEALTHY", lastSuccessAt: new Date() },
-    })
-    .catch(() => undefined);
-
-  setInterval(emitNewEarthquake, EMIT_INTERVAL_MS);
+  // Initial poll shortly after boot.
+  setTimeout(pollUsgs, 2000);
+  setInterval(pollUsgs, POLL_INTERVAL_MS);
   setInterval(broadcastStatus, STATUS_INTERVAL_MS);
-  // Initial status shortly after boot.
   setTimeout(broadcastStatus, 1500);
 });
 
