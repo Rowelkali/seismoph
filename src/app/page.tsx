@@ -9,6 +9,8 @@ import { useAlertSound } from "@/hooks/use-alert-sound";
 import { TopBar } from "@/components/seismo/TopBar";
 import { DevDataBanner } from "@/components/seismo/DevDataBanner";
 import { BasemapSelector } from "@/components/seismo/BasemapSelector";
+import { EmergencyMode } from "@/components/seismo/EmergencyMode";
+import { ReplayBar } from "@/components/seismo/ReplayBar";
 import { LeftNav, MobileNav } from "@/components/seismo/LeftNav";
 import { LayerControl } from "@/components/seismo/LayerControl";
 import { EventStream } from "@/components/seismo/EventStream";
@@ -188,6 +190,9 @@ export default function Home() {
     <div className={rootClass}>
       <TopBar wsConnected={effectivelyLive} onOpenSearch={() => { setView("locations"); }} />
 
+      {/* Emergency mode overlay — appears for M6+ events within last 2 hours */}
+      <EmergencyMode />
+
       {!isOverlay && <DevDataBanner />}
 
       <main className="relative flex min-h-0 flex-1">
@@ -240,6 +245,7 @@ export default function Home() {
             <div className={cn("hidden md:block", layerOpen && "block")}>
               <LayerControl className="w-52" />
               <BasemapSelector className="mt-2 w-52" />
+              <ReplayBar className="mt-2 w-52" />
             </div>
           </div>
         )}

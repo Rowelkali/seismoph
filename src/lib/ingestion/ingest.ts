@@ -37,6 +37,8 @@ function toDomain(row: {
   eventType: string;
   status: string;
   dataVersion: number;
+  sequence: number;
+  dataQuality: string;
   createdAt: Date;
   updatedAt: Date;
   intensities?: unknown[];
@@ -55,6 +57,8 @@ function toDomain(row: {
     eventType: row.eventType as EarthquakeEvent["eventType"],
     status: row.status as EarthquakeEvent["status"],
     dataVersion: row.dataVersion,
+    sequence: row.sequence,
+    dataQuality: row.dataQuality as EarthquakeEvent["dataQuality"],
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     intensities: (row.intensities as IntensityReport[] | undefined)?.map((i) => ({
@@ -64,6 +68,29 @@ function toDomain(row: {
         : (i as unknown as { reportTime: string }).reportTime,
     })),
   };
+}
+
+/** Compute data quality score based on field completeness + plausibility. */
+function computeDataQuality(r: RawEarthquake): "HIGH" | "MEDIUM" | "LOW" {
+  let score = 0;
+  let checks = 0;
+  // Magnitude present + plausible
+  checks++; if (Number.isFinite(r.magnitude) && r.magnitude > 0 && r.magnitude < 10) score++;
+  // Depth present + plausible
+  checks++; if (Number.isFinite(r.depthKm) && r.depthKm >= 0 && r.depthKm < 800) score++;
+  // Coordinates present + plausible
+  checks++; if (Number.isFinite(r.latitude) && Number.isFinite(r.longitude) && Math.abs(r.latitude) <= 90 && Math.abs(r.longitude) <= 180) score++;
+  // Origin time present + not in the future
+  checks++; if (r.originTime instanceof Date && !Number.isNaN(r.originTime.getTime()) && r.originTime.getTime() < Date.now() + 3600000) score++;
+  // Source present
+  checks++; if (r.source && r.source.length > 0) score++;
+  // Status reviewed (higher confidence)
+  checks++; if (r.status === "REVIEWED") score++;
+
+  const ratio = score / checks;
+  if (ratio >= 0.85) return "HIGH";
+  if (ratio >= 0.6) return "MEDIUM";
+  return "LOW";
 }
 
 /**
@@ -120,6 +147,11 @@ export async function ingestBatch(raw: RawEarthquake[]): Promise<IngestOutcome> 
     });
 
     if (!existing) {
+      // Compute next sequence number (max + 1) for realtime event recovery.
+      const maxSeq = await db.earthquake.aggregate({ _max: { sequence: true } });
+      const nextSeq = (maxSeq._max.sequence ?? 0) + 1;
+      const quality = computeDataQuality(r);
+
       const row = await db.earthquake.create({
         data: {
           externalId: r.externalId,
@@ -135,6 +167,8 @@ export async function ingestBatch(raw: RawEarthquake[]): Promise<IngestOutcome> 
           status: r.status,
           rawSourceHash: payloadHash,
           dataVersion: 1,
+          sequence: nextSeq,
+          dataQuality: quality,
         },
       });
       await upsertIntensities(row.id, r.intensities ?? []);

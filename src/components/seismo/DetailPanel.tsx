@@ -100,6 +100,16 @@ export function DetailPanel({ earthquake, loading, onClose, className }: Props) 
               </span>
             )}
             <StatusIndicator status="live" label={eq.status} />
+            {eq.dataQuality && (
+              <span className={cn(
+                "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider",
+                eq.dataQuality === "HIGH" ? "bg-emerald-500/15 text-emerald-400"
+                : eq.dataQuality === "MEDIUM" ? "bg-amber-500/15 text-amber-400"
+                : "bg-red-500/15 text-red-400",
+              )} title="Data integrity score based on field completeness + plausibility">
+                {eq.dataQuality} quality
+              </span>
+            )}
           </div>
         </div>
         {onClose && (

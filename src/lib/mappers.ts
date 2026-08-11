@@ -37,6 +37,8 @@ export function mapEarthquake(
     eventType: e.eventType as EarthquakeEvent["eventType"],
     status: e.status as EarthquakeEvent["status"],
     dataVersion: e.dataVersion,
+    sequence: e.sequence,
+    dataQuality: e.dataQuality as EarthquakeEvent["dataQuality"],
     createdAt: e.createdAt.toISOString(),
     updatedAt: e.updatedAt.toISOString(),
     intensities: e.intensities?.map(mapIntensity),

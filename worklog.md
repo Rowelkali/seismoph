@@ -195,3 +195,58 @@ Stage Summary:
 - Hazard layers load official PHIVOLCS data.
 - Zero console errors after toggling all layers on/off.
 - Lint clean, compiles 200.
+
+---
+Task ID: ADVANCED-FEATURES
+Agent: Z.ai Code (main)
+Task: Phase 1 (Reliability) + Phase 2 (Advanced visualization) upgrades per user's roadmap.
+
+Work Log:
+- EVENT SEQUENCE IDS + RECOVERY (Critical #1):
+  - Added `sequence` field to Earthquake model (monotonic, computed in app layer since SQLite doesn't support autoincrement on non-id fields)
+  - Backfilled 378 existing events with sequence numbers 1-378
+  - Created GET /api/earthquakes/since/[sequence] recovery endpoint — returns events with sequence > given value
+  - Clients track their lastSequence and can request missed events on WebSocket reconnect
+  - Verified: GET /api/earthquakes/since/375 → missedCount: 3, latestSeq: 378
+
+- DATA INTEGRITY ENGINE (Critical #3):
+  - Added `dataQuality` field to Earthquake model ("HIGH" | "MEDIUM" | "LOW")
+  - Created `computeDataQuality()` function — validates magnitude (0-10), depth (0-800), coordinates (-90/90, -180/180), origin time (not future), source present, review status
+  - Score ratio ≥0.85 = HIGH, ≥0.6 = MEDIUM, <0.6 = LOW
+  - All PHIVOLCS events scored HIGH (reviewed, complete data)
+  - dataQuality badge displayed in DetailPanel (green/amber/red)
+
+- EARTHQUAKE SEQUENCE DETECTION (High #5):
+  - Created GET /api/earthquakes/sequences endpoint
+  - Algorithm: find M4+ "main" events, group nearby events (within 72h + 100km + M2.5+)
+  - Labeled "Potential earthquake sequences (NOT confirmed aftershock swarms — requires official PHIVOLCS assessment)"
+  - Verified: found 5 sequences including M4.5+13 aftershocks, M4.2+17 aftershocks
+
+- EARTHQUAKE REPLAY (High #6):
+  - Created ReplayBar component — timeline scrubber with play/pause/skip controls
+  - Speed controls: 0.5×, 1×, 2×, 5×, 10×
+  - Animates up to 50 recent earthquakes chronologically
+  - Current event auto-selected on map during playback
+  - Shows event count + time range
+
+- EMERGENCY MODE (#16):
+  - Created EmergencyMode component — full-screen overlay for M6+ events within last 2 hours
+  - Shows magnitude + depth + location + safety guidance (Drop/Cover/Hold On, coastal evacuation)
+  "View event details" + "Safety information" buttons
+  - Dismissible, auto-triggers when significant event detected
+  - Labeled "NOT an official warning — visual priority mode"
+
+- ENHANCED LIVE INDICATOR (Critical #2):
+  - Created HealthIndicator component — distinguishes source health from app health
+  - Shows: PHIVOLCS source status, last source check time, ingestion latency, WebSocket state, DB event count, API server state
+  - Source health ≠ App health (server alive ≠ PHIVOLCS data fresh)
+
+Stage Summary:
+- 3 critical reliability fixes + 4 high-priority visualization features implemented
+- Event sequence recovery: clients can now detect missed events on reconnect
+- Data integrity: every event scored HIGH/MEDIUM/LOW based on field validation
+- Sequence detection: 5 potential earthquake sequences identified from real PHIVOLCS data
+- Replay timeline: play/pause/skip with 0.5x-10x speed controls
+- Emergency mode: M6+ events trigger focused safety UI
+- Enhanced health: source vs app health distinguished
+- Lint clean, 378 real PHIVOLCS earthquakes, maxSeq 378, zero errors

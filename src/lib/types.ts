@@ -41,6 +41,8 @@ export interface EarthquakeEvent {
   eventType: EventType;
   status: EventStatus;
   dataVersion: number;
+  sequence: number; // monotonic event sequence for realtime recovery
+  dataQuality: "HIGH" | "MEDIUM" | "LOW";
   createdAt: string;
   updatedAt: string;
   intensities?: IntensityReport[];

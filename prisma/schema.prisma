@@ -38,6 +38,14 @@ model Earthquake {
   /// SHA-256 of normalized source payload, for change detection / dedup.
   rawSourceHash       String?
   dataVersion         Int                @default(1)
+  /// Monotonically increasing sequence number for realtime event recovery.
+  /// Clients track their lastSequence and request missed events on reconnect.
+  /// Computed in the application layer (SQLite doesn't support autoincrement
+  /// on non-id fields).
+  sequence            Int                @default(0)
+  /// Data integrity score: "HIGH" | "MEDIUM" | "LOW"
+  /// Based on completeness of magnitude, depth, coordinates, and source review status.
+  dataQuality         String             @default("HIGH")
   createdAt           DateTime           @default(now())
   updatedAt           DateTime           @updatedAt
 
@@ -49,6 +57,7 @@ model Earthquake {
   @@index([latitude, longitude])
   @@index([source])
   @@index([status])
+  @@index([sequence])
 }
 
 /// Reported intensity (PEIS) at a named locality. Always sourced — never invented.
