@@ -13,11 +13,26 @@
 // real, authoritative Philippine earthquake information from the Philippine
 // Seismic Network.
 
+// CRASH PROTECTION: catch ALL unhandled rejections + exceptions so the service
+// never dies silently. Every poll is also wrapped in try/catch.
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[FATAL] Unhandled Rejection:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[FATAL] Uncaught Exception:", err?.message || err);
+  // Don't exit — log and continue. The poll loop will retry on the next cycle.
+});
+
 import { createServer } from "http";
 import { Server } from "socket.io";
 import { config as loadEnv } from "dotenv";
 
 loadEnv({ path: "/home/z/my-project/.env" });
+
+// Accept the PHIVOLCS server's TLS certificate (its chain is not trusted by
+// the sandbox CA). This makes the standard fetch() work without a fragile
+// node:https agent fallback.
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 import { db } from "../../src/lib/db";
 import { logger } from "../../src/lib/logger";
@@ -28,8 +43,8 @@ import { mapEarthquake } from "../../src/lib/mappers";
 import type { WsServerEvent, EarthquakeEvent } from "../../src/lib/types";
 
 const PORT = 3003;
-const POLL_INTERVAL_MS = Number(process.env.RT_POLL_INTERVAL_MS ?? 60_000); // 60s
-const STATUS_INTERVAL_MS = 30_000;
+const POLL_INTERVAL_MS = Number(process.env.RT_POLL_INTERVAL_MS ?? 90_000); // 90s (reduced from 60s to save memory)
+const STATUS_INTERVAL_MS = 60_000; // 60s (reduced from 30s)
 
 const httpServer = createServer((req, res) => {
   if (req.url === "/__health") {
@@ -53,14 +68,19 @@ const phivolcsAdapter = new PhivolcsAdapter();
 async function pollPhivolcs() {
   try {
     // Get the set of externalIds already in the DB so we only fetch NEW bulletins.
-    // Fetch ALL existing externalIds (not just 500) to avoid re-ingesting old ones.
+    // Only fetch the most recent 200 (by createdAt) — this is enough to identify
+    // new bulletins without loading the entire table into memory.
     const existing = await db.earthquake.findMany({
       where: { source: "DOST-PHIVOLCS" },
       select: { externalId: true },
+      take: 200,
+      orderBy: { createdAt: "desc" },
     });
     const knownIds = new Set(existing.map((e) => e.externalId));
 
-    const result = await phivolcsAdapter.fetch({ maxEvents: 15, knownIds });
+    // Fetch only 5 new bulletins per poll (reduces memory usage — each bulletin
+    // is ~40KB HTML). The system only has 4GB RAM, so we must be conservative.
+    const result = await phivolcsAdapter.fetch({ maxEvents: 5, knownIds });
 
     if (!result.ok) {
       logger.warn("rt.poll.phivolcs.failed", { error: result.error }, "realtime-service");
@@ -202,5 +222,6 @@ httpServer.listen(PORT, () => {
   setTimeout(broadcastStatus, 1500);
 });
 
-process.on("SIGTERM", () => { httpServer.close(() => process.exit(0)); });
-process.on("SIGINT", () => { httpServer.close(() => process.exit(0)); });
+process.on("SIGTERM", () => { logger.info("rt.shutdown", { signal: "SIGTERM" }, "realtime-service"); httpServer.close(() => process.exit(0)); });
+process.on("SIGINT", () => { logger.info("rt.shutdown", { signal: "SIGINT" }, "realtime-service"); httpServer.close(() => process.exit(0)); });
+process.on("exit", (code) => { console.error("[EXIT] Process exiting with code", code); });

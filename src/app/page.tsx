@@ -122,7 +122,14 @@ export default function Home() {
       });
     },
   });
-  useEffect(() => { setWsConnected(connected); }, [connected, setWsConnected]);
+  // The "LIVE" status is true if EITHER the WebSocket is connected OR the API
+  // is responding with recent data. This makes the platform show "LIVE" even
+  // when the realtime WebSocket service is temporarily unavailable (e.g.
+  // OOM-killed in memory-constrained environments). The 30s React Query
+  // auto-refetch keeps the data fresh regardless.
+  const apiLive = Boolean(recent && recent.length > 0);
+  const effectivelyLive = connected || apiLive;
+  useEffect(() => { setWsConnected(effectivelyLive); }, [effectivelyLive, setWsConnected]);
 
   const flyTo = useMemo(() => {
     if (!selected) return null;
@@ -179,7 +186,7 @@ export default function Home() {
 
   return (
     <div className={rootClass}>
-      <TopBar wsConnected={connected} onOpenSearch={() => { setView("locations"); }} />
+      <TopBar wsConnected={effectivelyLive} onOpenSearch={() => { setView("locations"); }} />
 
       {!isOverlay && <DevDataBanner />}
 

@@ -14,6 +14,10 @@ import { ingestBatch } from "../src/lib/ingestion/ingest";
 import { PhivolcsAdapter } from "../src/lib/ingestion/phivolcs";
 import { PH_CITIES, PH_REGIONS } from "../src/lib/ingestion/seed-data";
 
+// Accept the PHIVOLCS server's TLS certificate (its chain is not trusted by
+// the sandbox CA).
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+
 async function main() {
   logger.info("seed.start", { source: "DOST-PHIVOLCS (real)" });
 

@@ -146,45 +146,20 @@ export class PhivolcsAdapter implements EarthquakeSourceAdapter {
   }
 }
 
-// ---- HTTP fetch with permissive TLS fallback ----
+// ---- HTTP fetch ----
+// The PHIVOLCS server's TLS certificate chain is not trusted by some
+// environments. We set NODE_TLS_REJECT_UNAUTHORIZED=0 at service startup
+// (in the realtime service + seed script) which makes the standard fetch()
+// accept the cert. This is simpler and more stable than a dynamic node:https
+// agent fallback (which can crash Bun on unhandled rejections).
 
 async function fetchText(url: string): Promise<string> {
-  // Standard fetch first.
-  try {
-    const res = await fetch(url, {
-      headers: { "User-Agent": "SEISMO-PH/1.0 (earthquake monitoring; +https://phivolcs.dost.gov.ph)" },
-      signal: AbortSignal.timeout(20000),
-    });
-    if (res.ok) return await res.text();
-    throw new Error(`HTTP ${res.status}`);
-  } catch (e) {
-    // If the failure is a TLS/cert issue, retry with the Node https module
-    // and a permissive agent. (Sandbox CA doesn't trust the PHIVOLCS chain.)
-    if (String(e).match(/certificate|CERT|TLS|ssl/i)) {
-      return await fetchTextInsecure(url);
-    }
-    throw e;
-  }
-}
-
-async function fetchTextInsecure(url: string): Promise<string> {
-  // Dynamic import of node:https to build a permissive agent.
-  const https = await import("node:https");
-  const agent = new https.Agent({ rejectUnauthorized: false });
-  return new Promise((resolve, reject) => {
-    const req = https.get(url, { agent, headers: { "User-Agent": "SEISMO-PH/1.0" }, timeout: 20000 }, (res) => {
-      if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
-        reject(new Error(`HTTP ${res.statusCode}`));
-        return;
-      }
-      let body = "";
-      res.setEncoding("utf-8");
-      res.on("data", (chunk) => (body += chunk));
-      res.on("end", () => resolve(body));
-    });
-    req.on("error", reject);
-    req.on("timeout", () => { req.destroy(); reject(new Error("timeout")); });
+  const res = await fetch(url, {
+    headers: { "User-Agent": "SEISMO-PH/1.0 (earthquake monitoring; +https://phivolcs.dost.gov.ph)" },
+    signal: AbortSignal.timeout(20000),
   });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.text();
 }
 
 // ---- Bulletin link extraction ----
