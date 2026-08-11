@@ -23,9 +23,10 @@ import { db } from "../../src/lib/db";
 import { logger } from "../../src/lib/logger";
 import { ingestBatch } from "../../src/lib/ingestion/ingest";
 import { UsgsAdapter } from "../../src/lib/ingestion/usgs";
+import { PhivolcsAdapter } from "../../src/lib/ingestion/phivolcs";
 import { haversineKm } from "../../src/lib/geo";
 import { mapEarthquake } from "../../src/lib/mappers";
-import type { WsServerEvent, EarthquakeEvent } from "../../src/lib/types";
+import type { WsServerEvent, EarthquakeEvent, RawEarthquake } from "../../src/lib/types";
 
 const PORT = 3003;
 const POLL_INTERVAL_MS = Number(process.env.RT_POLL_INTERVAL_MS ?? 30_000); // 30s
@@ -52,64 +53,112 @@ const io = new Server(httpServer, {
 
 let lastPollAt: Date | null = null;
 
-async function pollUsgs() {
+// Source hierarchy:
+//   1. DOST-PHIVOLCS (PRIMARY)  — Philippine-authoritative. When configured,
+//      its events take precedence. If a USGS event matches a PHIVOLCS event
+//      (same time/location within tolerance), the PHIVOLCS record wins.
+//   2. USGS (SECONDARY)         — Always active. Provides live, real-time
+//      global seismic data covering the Philippines. Serves as backup
+//      monitoring and cross-reference when PHIVOLCS is not configured.
+//
+// Cross-reference logic:
+//   - After ingesting both sources, match events by time (±60s) and distance
+//     (≤50km). When a match is found, the PHIVOLCS record is authoritative;
+//     the USGS record is kept for cross-reference but not emitted as a
+//     separate "created" event (it's the same earthquake).
+
+const phivolcsAdapter = new PhivolcsAdapter();
+
+async function pollSources() {
   try {
     const since = lastPollAt ?? new Date(Date.now() - LOOKBACK_MS);
-    // Use a slightly earlier start to avoid boundary misses.
     const sinceBuffered = new Date(since.getTime() - 30_000);
-    const adapter = new UsgsAdapter({ since: sinceBuffered, minMagnitude: MIN_MAG });
-    const result = await adapter.fetch();
 
-    if (!result.ok) {
-      logger.warn("rt.poll.usgs.failed", { error: result.error }, "realtime-service");
-      await db.dataSource
-        .update({
-          where: { name: "USGS" },
+    // --- 1. PRIMARY: DOST-PHIVOLCS ---
+    const phivolcsResult = await phivolcsAdapter.fetch();
+    const phivolcsConfigured = phivolcsAdapter.configured;
+
+    if (phivolcsConfigured) {
+      if (phivolcsResult.ok) {
+        await db.dataSource.update({
+          where: { name: "DOST-PHIVOLCS" },
+          data: { status: "HEALTHY", lastSuccessAt: new Date(), endpoint: process.env.PHIVOLCS_API_URL },
+        }).catch(() => undefined);
+        logger.info("rt.poll.phivolcs.ok", { count: phivolcsResult.events.length }, "realtime-service");
+      } else {
+        await db.dataSource.update({
+          where: { name: "DOST-PHIVOLCS" },
           data: { status: "DEGRADED", lastFailureAt: new Date() },
-        })
-        .catch(() => undefined);
+        }).catch(() => undefined);
+        logger.warn("rt.poll.phivolcs.failed", { error: phivolcsResult.error }, "realtime-service");
+      }
+    }
+
+    // --- 2. SECONDARY: USGS (always polled as backup/cross-reference) ---
+    const usgsAdapterRecent = new UsgsAdapter({ since: sinceBuffered, minMagnitude: MIN_MAG });
+    const usgsResult = await usgsAdapterRecent.fetch();
+
+    if (!usgsResult.ok) {
+      logger.warn("rt.poll.usgs.failed", { error: usgsResult.error }, "realtime-service");
+      await db.dataSource.update({
+        where: { name: "USGS" },
+        data: { status: "DEGRADED", lastFailureAt: new Date() },
+      }).catch(() => undefined);
       return;
     }
 
-    const outcome = await ingestBatch(result.events);
+    // --- Cross-reference: filter out USGS events that match PHIVOLCS events ---
+    let eventsToIngest: typeof usgsResult.events = [];
+    const phivolcsEvents = phivolcsResult.ok ? phivolcsResult.events : [];
 
-    // Emit created events
-    for (const created of outcome.created) {
-      const event: EarthquakeEvent = created;
-      const payload: WsServerEvent = { type: "earthquake.created", data: event };
-      io.emit("earthquake.created", payload.data);
-      io.emit("message", payload);
-      logger.info("rt.emit.earthquake.created", {
-        externalId: event.externalId,
-        magnitude: event.magnitude,
-        depthKm: event.depthKm,
-        location: event.locationDescription,
-        originTime: event.originTime,
+    if (phivolcsEvents.length > 0) {
+      // Ingest PHIVOLCS events first (primary, authoritative)
+      const phivolcsOutcome = await ingestBatch(phivolcsEvents);
+      for (const created of phivolcsOutcome.created) {
+        await emitCreated(created);
+      }
+
+      // Filter USGS events: skip those that match a PHIVOLCS event
+      eventsToIngest = usgsResult.events.filter((usgsEq) => {
+        return !phivolcsEvents.some((pEq) => isSameEvent(pEq, usgsEq));
+      });
+      logger.info("rt.poll.crossref", {
+        phivolcs: phivolcsEvents.length,
+        usgs: usgsResult.events.length,
+        usgsAfterXref: eventsToIngest.length,
+        filtered: usgsResult.events.length - eventsToIngest.length,
       }, "realtime-service");
-      await evaluateAlerts(event);
+    } else {
+      // No PHIVOLCS events (not configured or no new events) — ingest all USGS
+      eventsToIngest = usgsResult.events;
     }
 
-    // Emit updated events (e.g. automatic → reviewed, magnitude revision)
+    // --- Ingest USGS events (secondary) ---
+    const outcome = await ingestBatch(eventsToIngest);
+
+    for (const created of outcome.created) {
+      await emitCreated(created);
+    }
     for (const updated of outcome.updated) {
       io.emit("earthquake.updated", mapEarthquake(updated));
     }
 
-    // Mark source healthy
-    await db.dataSource
-      .update({
-        where: { name: "USGS" },
-        data: {
-          status: "HEALTHY",
-          lastSuccessAt: new Date(),
-          lastEventExternalId: outcome.created[outcome.created.length - 1]?.externalId ?? undefined,
-        },
-      })
-      .catch(() => undefined);
+    // Mark USGS healthy
+    await db.dataSource.update({
+      where: { name: "USGS" },
+      data: {
+        status: "HEALTHY",
+        lastSuccessAt: new Date(),
+        lastEventExternalId: outcome.created[outcome.created.length - 1]?.externalId ?? undefined,
+      },
+    }).catch(() => undefined);
 
     lastPollAt = new Date();
-    if (outcome.created.length > 0 || outcome.updated.length > 0) {
+    if (outcome.created.length > 0 || outcome.updated.length > 0 || (phivolcsEvents.length > 0)) {
       logger.info("rt.poll.summary", {
-        fetched: result.events.length,
+        phivolcsFetched: phivolcsEvents.length,
+        usgsFetched: usgsResult.events.length,
+        usgsAfterXref: eventsToIngest.length,
         created: outcome.created.length,
         updated: outcome.updated.length,
         unchanged: outcome.unchanged,
@@ -118,6 +167,30 @@ async function pollUsgs() {
   } catch (e) {
     logger.error("rt.poll.error", { error: String(e) }, "realtime-service");
   }
+}
+
+/** Determine if two events from different sources refer to the same earthquake. */
+function isSameEvent(a: RawEarthquake, b: RawEarthquake): boolean {
+  const timeDiff = Math.abs(a.originTime.getTime() - b.originTime.getTime());
+  if (timeDiff > 90_000) return false; // ±90 seconds
+  const dist = haversineKm(a.latitude, a.longitude, b.latitude, b.longitude);
+  if (dist > 50) return false; // ≤50 km
+  return true;
+}
+
+async function emitCreated(event: EarthquakeEvent) {
+  const payload: WsServerEvent = { type: "earthquake.created", data: event };
+  io.emit("earthquake.created", payload.data);
+  io.emit("message", payload);
+  logger.info("rt.emit.earthquake.created", {
+    externalId: event.externalId,
+    source: event.source,
+    magnitude: event.magnitude,
+    depthKm: event.depthKm,
+    location: event.locationDescription,
+    originTime: event.originTime,
+  }, "realtime-service");
+  await evaluateAlerts(event);
 }
 
 async function evaluateAlerts(event: EarthquakeEvent) {
@@ -197,12 +270,13 @@ httpServer.listen(PORT, () => {
   logger.info("rt.listen", { port: PORT, source: "USGS (live)", pollIntervalMs: POLL_INTERVAL_MS, minMag: MIN_MAG }, "realtime-service");
   console.log(`\n✓ SEISMO PH realtime service on port ${PORT}`);
   console.log(`  WebSocket:  io("/?XTransformPort=${PORT}")`);
-  console.log(`  Source:      USGS FDSN-WS (REAL, live)`);
+  console.log(`  Primary:     DOST-PHIVOLCS ${phivolcsAdapter.configured ? "(configured, active)" : "(adapter ready, not configured)"}`);
+  console.log(`  Secondary:   USGS FDSN-WS (REAL, live, backup + cross-reference)`);
   console.log(`  Poll:        every ${POLL_INTERVAL_MS / 1000}s, min magnitude ${MIN_MAG}\n`);
 
   // Initial poll shortly after boot.
-  setTimeout(pollUsgs, 2000);
-  setInterval(pollUsgs, POLL_INTERVAL_MS);
+  setTimeout(pollSources, 2000);
+  setInterval(pollSources, POLL_INTERVAL_MS);
   setInterval(broadcastStatus, STATUS_INTERVAL_MS);
   setTimeout(broadcastStatus, 1500);
 });

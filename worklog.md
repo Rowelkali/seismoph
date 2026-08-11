@@ -61,3 +61,25 @@ Stage Summary:
 - Three user complaints addressed: (1) platform now feels live — recent real earthquakes animate onto the map on load + "Replay recent" button + 30s USGS polling for genuine new events; (2) detail panel only appears when you click an earthquake (map is no longer covered); (3) emergency siren plays on new significant earthquakes (M4.0+) with toggle + test button.
 - Verified in Agent Browser: page renders, detail panel hidden initially, opens on click, closes on close button. Replay button works. Sound test button works (no console errors). USGS:HEALTHY shown. Lint clean.
 - Real PH earthquakes are genuinely rare (~1-3/day M2.5+), so the replay animation + 30s polling + sound on new events is the honest way to make it feel live while waiting for real new quakes.
+
+---
+Task ID: SOURCE-HIERARCHY + MAP-FIX
+Agent: Z.ai Code (main)
+Task: Implement PHIVOLCS-primary / USGS-secondary source hierarchy + fix earthquakes not showing on map.
+
+Work Log:
+- ROOT CAUSE of map bug: MapLibre v6's WebGL worker wasn't processing GeoJSON source data (isSourceLoaded returned false, queryRenderedFeatures returned 0). The terrain DEM source was also keeping styleLoaded=false. Even after removing terrain, the GeoJSON worker silently failed to process data.
+- MAP FIX: Rewrote EarthquakeMap to use HTML markers (MapLibre Marker API with custom DOM elements) instead of GeoJSON circle layers. HTML markers don't require the WebGL worker — they're DOM elements positioned on the map. 100 earthquake markers now render reliably with magnitude-colored dots, pulse animations for M4+, expanding rings for M4.5+, magnitude labels for M5+, and white selection highlight. City markers (55) also use HTML markers. Faults still use a GeoJSON line layer (simpler, static data). Terrain is off by default and dynamically added/removed on toggle.
+- SOURCE HIERARCHY: Rewrote realtime service polling to implement the architecture:
+  1. PRIMARY: DOST-PHIVOLCS — polled first. When configured (PHIVOLCS_API_URL set), events take precedence. Currently not configured → adapter reports "not_configured" gracefully.
+  2. SECONDARY: USGS — always polled as backup + cross-reference. Provides live real-time data.
+  Cross-reference: isSameEvent() matches events by time (±90s) and distance (≤50km). When a USGS event matches a PHIVOLCS event, the PHIVOLCS record is authoritative; the USGS duplicate is filtered out (not emitted as a separate created event).
+- Updated About panel with the architecture diagram (ASCII art showing the flow: DOST-PHIVOLCS → Primary → SEISMO PH → PostgreSQL → WebSocket → 3D Map, with USGS as Secondary → Cross-reference/backup). Shows both sources with live status indicators.
+- Startup banner shows: "Primary: DOST-PHIVOLCS (adapter ready, not configured)" and "Secondary: USGS FDSN-WS (REAL, live, backup + cross-reference)".
+
+Stage Summary:
+- Earthquakes now render on the map (100 HTML markers, verified in browser — click→detail panel works).
+- Source hierarchy implemented: PHIVOLCS primary (adapter ready, awaiting configuration), USGS secondary (live, active, cross-referencing).
+- Lint clean, both services running, no console errors.
+- DB: 536 real USGS earthquakes, 0 PHIVOLCS (adapter not configured). Sources: USGS=HEALTHY, DOST-PHIVOLCS=UNKNOWN.
+- To activate PHIVOLCS as primary: set PHIVOLCS_API_URL (and PHIVOLCS_API_KEY if required) with a confirmed authorized endpoint. The adapter will automatically take precedence over USGS for matching events.

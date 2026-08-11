@@ -1,13 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useMemo } from "react";
-import * as maplibregl from "maplibre-gl";
-import type { Map as MLMap, MapMouseEvent, LngLatBoundsLike, GeoJSONFeature } from "maplibre-gl";
+import { Map as MLMap, Marker, LngLatBoundsLike, MapMouseEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { EarthquakeEvent } from "@/lib/types";
 import { PH_CITIES } from "@/lib/ingestion/seed-data";
 import { FAULTS } from "./faults";
-import { severityOf } from "@/lib/ui";
+import { severityOf, SEVERITY_COLOR } from "@/lib/ui";
 import { PH_CENTER } from "@/lib/geo";
 
 interface Props {
@@ -26,17 +25,25 @@ interface Props {
   reducedMotion?: boolean;
   dataSaver?: boolean;
   flyTo?: { lon: number; lat: number; zoom?: number } | null;
-  /** Imperative command: change `nonce` to trigger `action`. */
   command?: { action: "reset" | "zoomIn" | "zoomOut"; nonce: number } | null;
   className?: string;
 }
 
-// Inline dark raster style (no token, reliable). CARTO dark basemap + OSM.
-const DARK_STYLE: maplibregl.StyleSpecification = {
+const SEV_HEX: Record<string, string> = {
+  minor: "#7c8a99",
+  light: "#5eead4",
+  moderate: "#f5c451",
+  strong: "#f59331",
+  major: "#e6492d",
+  great: "#b8271a",
+};
+
+// Inline dark raster style (no token, reliable). CARTO dark basemap.
+const DARK_STYLE = {
   version: 8,
   sources: {
     "carto-dark": {
-      type: "raster",
+      type: "raster" as const,
       tiles: [
         "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
         "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
@@ -50,22 +57,13 @@ const DARK_STYLE: maplibregl.StyleSpecification = {
     },
   },
   layers: [
-    { id: "background", type: "background", paint: { "background-color": "#0c0f14" } },
-    { id: "carto-dark-tiles", type: "raster", source: "carto-dark", paint: { "raster-opacity": 0.92 } },
+    { id: "background", type: "background" as const, paint: { "background-color": "#0c0f14" } },
+    { id: "carto-dark-tiles", type: "raster" as const, source: "carto-dark", paint: { "raster-opacity": 0.92 } },
   ],
 };
 
 const PH_BOUNDS: LngLatBoundsLike = [117.5, 4.5, 127.5, 21.0];
-
-// Severity → hex for MapLibre expressions.
-const SEV_HEX: Record<string, string> = {
-  minor: "#7c8a99",
-  light: "#5eead4",
-  moderate: "#f5c451",
-  strong: "#f59331",
-  major: "#e6492d",
-  great: "#b8271a",
-};
+const MAX_MARKERS = 150;
 
 export function EarthquakeMap({
   earthquakes,
@@ -80,19 +78,18 @@ export function EarthquakeMap({
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MLMap | null>(null);
+  const markersRef = useRef<Map<string, Marker>>(new Map());
   const onSelectRef = useRef(onSelect);
   useEffect(() => {
     onSelectRef.current = onSelect;
   });
 
-  // Index for O(1) lookup on click.
   const byId = useMemo(() => {
     const m = new Map<string, EarthquakeEvent>();
     for (const e of earthquakes) m.set(e.id, e);
     return m;
   }, [earthquakes]);
 
-  // keep byId in a ref for the click handler (which is bound once at load)
   const byIdRef = useRef(byId);
   useEffect(() => {
     byIdRef.current = byId;
@@ -101,12 +98,12 @@ export function EarthquakeMap({
   // ---- one-time map init ----
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
-    const map = new maplibregl.Map({
+    const map = new MLMap({
       container: containerRef.current,
       style: DARK_STYLE,
       center: [PH_CENTER.lon, PH_CENTER.lat],
       zoom: 5.2,
-      pitch: layers.terrain ? 45 : 0,
+      pitch: 0,
       bearing: 0,
       maxBounds: [[110, 0], [135, 26]],
       attributionControl: { compact: true },
@@ -114,26 +111,30 @@ export function EarthquakeMap({
       antialias: !dataSaver,
     });
     mapRef.current = map;
+    if (typeof window !== "undefined") {
+      (window as unknown as { __seismoMap?: MLMap }).__seismoMap = map;
+    }
 
     map.on("load", () => {
-      // --- terrain (free AWS terrarium DEM) ---
-      try {
-        map.addSource("terrain-dem", {
-          type: "raster-dem",
-          tiles: ["https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png"],
-          tileSize: 256,
-          maxzoom: 13,
-          encoding: "terrarium",
-          attribution: "Terrain: AWS Terrain Tiles (terrarium)",
-        });
-        if (layers.terrain) {
+      // --- terrain (only when explicitly enabled) ---
+      if (layers.terrain) {
+        try {
+          map.addSource("terrain-dem", {
+            type: "raster-dem",
+            tiles: ["https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png"],
+            tileSize: 256,
+            maxzoom: 13,
+            encoding: "terrarium",
+            attribution: "Terrain: AWS Terrain Tiles (terrarium)",
+          });
           map.setTerrain({ source: "terrain-dem", exaggeration: 1.5 });
+          map.easeTo({ pitch: 45, duration: 600 });
+        } catch {
+          /* terrain optional */
         }
-      } catch {
-        /* terrain optional — degrade silently */
       }
 
-      // --- faults source ---
+      // --- faults as a GeoJSON line layer (simple, static data) ---
       map.addSource("faults", {
         type: "geojson",
         data: {
@@ -153,265 +154,174 @@ export function EarthquakeMap({
         paint: {
           "line-color": ["match", ["get", "kind"], "TRENCH", "#e07b5a", "#f5a623"],
           "line-width": ["interpolate", ["linear"], ["zoom"], 4, 0.8, 8, 1.6, 12, 3],
-          "line-opacity": 0.75,
+          "line-opacity": 0.7,
           "line-dasharray": [2, 1.5],
         },
       });
-      map.addLayer({
-        id: "faults-glow",
-        type: "line",
-        source: "faults",
-        layout: { visibility: layers.faults ? "visible" : "none" },
-        paint: {
-          "line-color": ["match", ["get", "kind"], "TRENCH", "#e07b5a", "#f5a623"],
-          "line-width": 6,
-          "line-opacity": 0.08,
-          "line-blur": 4,
-        },
-      });
 
-      // --- cities source ---
-      map.addSource("cities", {
-        type: "geojson",
-        data: {
-          type: "FeatureCollection",
-          features: PH_CITIES.map((c) => ({
-            type: "Feature",
-            geometry: { type: "Point", coordinates: [c.lon, c.lat] },
-            properties: { name: c.name, type: c.type, pop: c.population ?? 0 },
-          })),
-        },
-      });
-      map.addLayer({
-        id: "cities-dot",
-        type: "circle",
-        source: "cities",
-        layout: { visibility: layers.cities ? "visible" : "none" },
-        paint: {
-          "circle-radius": ["interpolate", ["linear"], ["get", "pop"], 0, 2, 500000, 3.5, 2000000, 5],
-          "circle-color": "#5eead4",
-          "circle-opacity": 0.85,
-          "circle-stroke-color": "#0c0f14",
-          "circle-stroke-width": 1,
-        },
-      });
-      map.addLayer({
-        id: "cities-label",
-        type: "symbol",
-        source: "cities",
-        layout: {
-          visibility: layers.cities ? "visible" : "none",
-          "text-field": ["get", "name"],
-          "text-size": 10,
-          "text-offset": [0, 0.6],
-          "text-anchor": "top",
-          "text-font": ["Noto Sans Regular"],
-        },
-        paint: {
-          "text-color": "#9fb0c0",
-          "text-halo-color": "#0c0f14",
-          "text-halo-width": 1.5,
-        },
-        minzoom: 6,
-      });
+      // --- cities as HTML markers (reliable, no worker dependency) ---
+      // City markers are created in a separate effect below.
 
-      // --- earthquakes source (updated reactively) ---
-      map.addSource("earthquakes", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-
-      // heatmap (off by default)
-      map.addLayer({
-        id: "eq-heatmap",
-        type: "heatmap",
-        source: "earthquakes",
-        layout: { visibility: layers.heatmap ? "visible" : "none" },
-        paint: {
-          "heatmap-weight": ["interpolate", ["linear"], ["get", "magnitude"], 3, 0, 5, 0.6, 6.5, 1],
-          "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 0, 1, 8, 2.5],
-          "heatmap-color": [
-            "interpolate", ["linear"], ["heatmap-density"],
-            0, "rgba(0,0,0,0)", 0.3, "#1d4f5a", 0.6, "#f5c451", 0.85, "#e6492d", 1, "#b8271a",
-          ],
-          "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 4, 8, 10, 40],
-          "heatmap-opacity": 0.55,
-        },
-      });
-
-      // intensity rings (faint halo for M>=4.5 recent)
-      map.addLayer({
-        id: "eq-ring",
-        type: "circle",
-        source: "earthquakes",
-        layout: { visibility: layers.intensityRings ? "visible" : "none" },
-        filter: [">=", ["get", "magnitude"], 4.5],
-        paint: {
-          "circle-radius": ["interpolate", ["linear"], ["get", "magnitude"], 4.5, 16, 6, 30, 8, 60],
-          "circle-color": ["match", ["get", "severity"], "moderate", SEV_HEX.moderate, "strong", SEV_HEX.strong, "major", SEV_HEX.major, "great", SEV_HEX.great, SEV_HEX.moderate],
-          "circle-opacity": 0.0,
-          "circle-stroke-color": ["match", ["get", "severity"], "moderate", SEV_HEX.moderate, "strong", SEV_HEX.strong, "major", SEV_HEX.major, "great", SEV_HEX.great, SEV_HEX.moderate],
-          "circle-stroke-width": 1,
-          "circle-stroke-opacity": 0.35,
-          "circle-blur": 0.8,
-        },
-      });
-
-      // main marker fill
-      map.addLayer({
-        id: "eq-fill",
-        type: "circle",
-        source: "earthquakes",
-        layout: { visibility: layers.earthquakes ? "visible" : "none" },
-        paint: {
-          "circle-radius": ["interpolate", ["linear"], ["get", "magnitude"], 3, 5, 5, 9, 6.5, 14, 8, 22],
-          "circle-color": [
-            "match", ["get", "severity"],
-            "minor", SEV_HEX.minor,
-            "light", SEV_HEX.light,
-            "moderate", SEV_HEX.moderate,
-            "strong", SEV_HEX.strong,
-            "major", SEV_HEX.major,
-            "great", SEV_HEX.great,
-            SEV_HEX.moderate,
-          ],
-          "circle-opacity": 0.9,
-          "circle-stroke-color": "#0c0f14",
-          "circle-stroke-width": 1.2,
-        },
-      });
-
-      // selected highlight
-      map.addLayer({
-        id: "eq-selected",
-        type: "circle",
-        source: "earthquakes",
-        filter: ["==", ["get", "id"], selectedId ?? "__none__"],
-        paint: {
-          "circle-radius": ["interpolate", ["linear"], ["get", "magnitude"], 3, 11, 5, 16, 6.5, 22, 8, 30],
-          "circle-color": "#ffffff",
-          "circle-opacity": 0.0,
-          "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 2,
-          "circle-stroke-opacity": 0.95,
-        },
-      });
-
-      // magnitude label for M>=5
-      map.addLayer({
-        id: "eq-label",
-        type: "symbol",
-        source: "earthquakes",
-        filter: [">=", ["get", "magnitude"], 5],
-        layout: {
-          "text-field": ["concat", "M", ["to-string", ["get", "magnitude"]]],
-          "text-size": 10,
-          "text-offset": [0, -1.4],
-          "text-anchor": "bottom",
-          "text-font": ["Noto Sans Regular"],
-        },
-        paint: {
-          "text-color": "#f5f7fa",
-          "text-halo-color": "#0c0f14",
-          "text-halo-width": 1.5,
-        },
-      });
-
-      // click → select
-      map.on("click", "eq-fill", (e: MapMouseEvent & { features?: GeoJSONFeature[] }) => {
-        const f = e.features?.[0];
-        if (!f) return;
-        const id = String((f.properties as { id?: string }).id ?? "");
-        const eq = byIdRef.current.get(id);
-        if (eq) onSelectRef.current?.(eq);
-      });
-
-      // cursor
-      map.on("mouseenter", "eq-fill", () => (map.getCanvas().style.cursor = "pointer"));
-      map.on("mouseleave", "eq-fill", () => (map.getCanvas().style.cursor = ""));
-
-      // initial fit
-      map.fitBounds(PH_BOUNDS, { padding: 28, pitch: layers.terrain ? 45 : 0 });
+      // Initial fit
+      map.fitBounds(PH_BOUNDS, { padding: 28, pitch: 0 });
     });
 
     return () => {
+      // Clean up all markers
+      markersRef.current.forEach((m) => m.remove());
+      markersRef.current.clear();
       map.remove();
       mapRef.current = null;
     };
   }, []);
 
-  // keep byId in a ref for the click handler (which is bound once)
-  // (declared above near byId)
-
-  // ---- update earthquake data ----
+  // ---- create / update earthquake HTML markers ----
+  // Uses MapLibre Marker (DOM elements) instead of GeoJSON circle layers.
+  // DOM markers don't require the WebGL worker to process GeoJSON data,
+  // so they render reliably in all browser environments.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    const update = () => {
-      const src = map.getSource("earthquakes") as maplibregl.GeoJSONSource | undefined;
-      if (!src) return;
-      const features = earthquakes.map((e) => ({
-        type: "Feature" as const,
-        geometry: { type: "Point" as const, coordinates: [e.longitude, e.latitude] },
-        properties: {
-          id: e.id,
-          magnitude: e.magnitude,
-          depth: e.depthKm,
-          severity: severityOf(e.magnitude),
-          location: e.locationDescription,
-          source: e.source,
-        },
-      }));
-      src.setData({ type: "FeatureCollection", features });
-    };
-    if (map.loaded()) update();
-    else map.once("idle", update);
-  }, [earthquakes]);
 
-  // ---- update selected filter ----
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !map.getSource("earthquakes")) return;
-    const apply = () => {
-      map.setFilter("eq-selected", ["==", ["get", "id"], selectedId ?? "__none__"]);
-    };
-    if (map.loaded()) apply();
-    else map.once("idle", apply);
-  }, [selectedId]);
+    const updateMarkers = () => {
+      if (!layers.earthquakes) {
+        // Hide all markers
+        markersRef.current.forEach((m) => m.getElement().style.setProperty("display", "none"));
+        return;
+      }
 
-  // ---- layer visibility ----
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !map.getSource("earthquakes")) return;
-    const setVis = (id: string, v: boolean) => {
-      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", v ? "visible" : "none");
-    };
-    const apply = () => {
-      setVis("eq-fill", layers.earthquakes);
-      setVis("eq-label", layers.earthquakes);
-      setVis("eq-ring", layers.intensityRings && layers.earthquakes);
-      setVis("eq-heatmap", layers.heatmap);
-      setVis("faults-line", layers.faults);
-      setVis("faults-glow", layers.faults);
-      setVis("cities-dot", layers.cities);
-      setVis("cities-label", layers.cities);
-      // terrain
-      if (map.getSource("terrain-dem")) {
-        if (layers.terrain) {
-          map.setTerrain({ source: "terrain-dem", exaggeration: 1.5 });
-          map.easeTo({ pitch: 45, duration: 600 });
+      const visible = earthquakes.slice(0, MAX_MARKERS);
+      const visibleIds = new Set(visible.map((e) => e.id));
+
+      // Remove markers no longer in the visible set
+      for (const [id, marker] of markersRef.current) {
+        if (!visibleIds.has(id)) {
+          marker.remove();
+          markersRef.current.delete(id);
         } else {
-          map.setTerrain(null);
-          map.easeTo({ pitch: 0, duration: 600 });
+          marker.getElement().style.setProperty("display", "");
+        }
+      }
+
+      // Add / update markers
+      for (const eq of visible) {
+        const sev = severityOf(eq.magnitude);
+        const color = SEVERITY_COLOR[sev];
+        const existing = markersRef.current.get(eq.id);
+        if (existing) {
+          // Update position + color in case data changed
+          existing.setLngLat([eq.longitude, eq.latitude]);
+          const el = existing.getElement();
+          updateMarkerStyle(el, eq, color, eq.id === selectedId, reducedMotion);
+        } else {
+          const el = createMarkerElement(eq, color, eq.id === selectedId, reducedMotion);
+          el.addEventListener("click", (e) => {
+            e.stopPropagation();
+            onSelectRef.current?.(eq);
+          });
+          const marker = new Marker({ element: el, anchor: "center" })
+            .setLngLat([eq.longitude, eq.latitude])
+            .addTo(map);
+          markersRef.current.set(eq.id, marker);
         }
       }
     };
-    if (map.loaded()) apply();
-    else map.once("idle", apply);
-  }, [layers]);
+
+    // Run immediately (the map exists at this point) + on move for culling
+    updateMarkers();
+  }, [earthquakes, layers.earthquakes, selectedId, reducedMotion]);
+
+  // ---- city markers ----
+  const cityMarkersRef = useRef<Marker[]>([]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const apply = () => {
+      if (layers.cities) {
+        // Create city markers if not yet created
+        if (cityMarkersRef.current.length === 0) {
+          for (const c of PH_CITIES) {
+            const el = document.createElement("div");
+            el.className = "seismo-city-marker";
+            el.style.cssText = `
+              display: flex; flex-direction: column; align-items: center;
+              pointer-events: none; transform: translateY(-4px);
+            `;
+            const dot = document.createElement("div");
+            const size = c.population && c.population > 1000000 ? 8 : c.population && c.population > 300000 ? 6 : 4;
+            dot.style.cssText = `
+              width: ${size}px; height: ${size}px; border-radius: 50%;
+              background: #5eead4; opacity: 0.7;
+              border: 1px solid #0c0f14;
+            `;
+            const label = document.createElement("div");
+            label.textContent = c.name;
+            label.style.cssText = `
+              font-size: 10px; color: #9fb0c0; margin-top: 2px;
+              text-shadow: 0 0 3px #0c0f14, 0 0 3px #0c0f14;
+              white-space: nowrap; font-family: var(--font-geist-sans, sans-serif);
+            `;
+            el.appendChild(dot);
+            el.appendChild(label);
+            const marker = new Marker({ element: el, anchor: "bottom" })
+              .setLngLat([c.lon, c.lat])
+              .addTo(map);
+            cityMarkersRef.current.push(marker);
+          }
+        }
+        cityMarkersRef.current.forEach((m) => m.getElement().style.setProperty("display", ""));
+      } else {
+        cityMarkersRef.current.forEach((m) => m.getElement().style.setProperty("display", "none"));
+      }
+    };
+    apply();
+  }, [layers.cities]);
+
+  // ---- faults visibility ----
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.getLayer("faults-line")) return;
+    map.setLayoutProperty("faults-line", "visibility", layers.faults ? "visible" : "none");
+  }, [layers.faults]);
+
+  // ---- terrain toggle ----
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (layers.terrain && !map.getSource("terrain-dem")) {
+      try {
+        map.addSource("terrain-dem", {
+          type: "raster-dem",
+          tiles: ["https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png"],
+          tileSize: 256,
+          maxzoom: 13,
+          encoding: "terrarium",
+          attribution: "Terrain: AWS Terrain Tiles (terrarium)",
+        });
+        map.setTerrain({ source: "terrain-dem", exaggeration: 1.5 });
+        map.easeTo({ pitch: 45, duration: 600 });
+      } catch {
+        /* terrain optional */
+      }
+    } else if (!layers.terrain && map.getSource("terrain-dem")) {
+      map.setTerrain(null);
+      map.easeTo({ pitch: 0, duration: 600 });
+      setTimeout(() => {
+        try {
+          if (map.getSource("terrain-dem") && !map.getTerrain()) {
+            map.removeSource("terrain-dem");
+          }
+        } catch {
+          /* ignore */
+        }
+      }, 700);
+    }
+  }, [layers.terrain]);
 
   // ---- flyTo ----
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !flyTo) return;
-    if (!map.loaded()) return;
     map.flyTo({
       center: [flyTo.lon, flyTo.lat],
       zoom: flyTo.zoom ?? 8,
@@ -426,15 +336,64 @@ export function EarthquakeMap({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !command) return;
-    if (!map.loaded()) return;
     if (command.action === "reset") {
-      map.fitBounds(PH_BOUNDS, { padding: 28, pitch: layers.terrain ? 45 : 0, bearing: 0, duration: reducedMotion ? 0 : 900 });
+      map.fitBounds(PH_BOUNDS, { padding: 28, pitch: 0, bearing: 0, duration: reducedMotion ? 0 : 900 });
     } else if (command.action === "zoomIn") {
       map.zoomIn({ duration: 250 });
     } else if (command.action === "zoomOut") {
       map.zoomOut({ duration: 250 });
     }
-  }, [command, layers.terrain, reducedMotion]);
+  }, [command, reducedMotion]);
 
-  return <div ref={containerRef} className={className} aria-label="Interactive 3D earthquake map of the Philippines" role="application" />;
+  return (
+    <div ref={containerRef} className={className} aria-label="Interactive 3D earthquake map of the Philippines" role="application" />
+  );
+}
+
+// ---- marker element factory ----
+
+function markerRadius(mag: number): number {
+  return Math.max(5, Math.min(24, 4 + mag * 2.5));
+}
+
+function createMarkerElement(
+  eq: EarthquakeEvent,
+  color: string,
+  isSelected: boolean,
+  reducedMotion?: boolean,
+): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "seismo-eq-marker";
+  el.style.cssText = `
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    width: ${markerRadius(eq.magnitude) * 2}px; height: ${markerRadius(eq.magnitude) * 2}px;
+  `;
+  updateMarkerStyle(el, eq, color, isSelected, reducedMotion);
+  return el;
+}
+
+function updateMarkerStyle(
+  el: HTMLElement,
+  eq: EarthquakeEvent,
+  color: string,
+  isSelected: boolean,
+  reducedMotion?: boolean,
+) {
+  const r = markerRadius(eq.magnitude);
+  el.style.width = `${r * 2}px`;
+  el.style.height = `${r * 2}px`;
+  const showRing = eq.magnitude >= 4.5 && !reducedMotion;
+  const ringSize = r * 3;
+  el.innerHTML = `
+    ${showRing ? `<div style="position:absolute;width:${ringSize}px;height:${ringSize}px;border-radius:50%;border:1.5px solid ${color};opacity:0.4;${reducedMotion ? "" : "animation:seismo-ring 2.8s ease-out infinite;"}"></div>` : ""}
+    ${!reducedMotion && eq.magnitude >= 4 ? `<div style="position:absolute;width:${r * 2}px;height:${r * 2}px;border-radius:50%;background:${color};opacity:0.3;animation:seismo-pulse 2.4s cubic-bezier(0.2,0.6,0.3,1) infinite;"></div>` : ""}
+    <div style="
+      position: relative; width: ${r * 2}px; height: ${r * 2}px; border-radius: 50%;
+      background: ${color}; opacity: 0.9;
+      border: ${isSelected ? "2px solid #ffffff" : "1.2px solid rgba(0,0,0,0.4)"};
+      box-shadow: ${isSelected ? `0 0 12px ${color}, 0 0 4px #ffffff` : `0 0 6px ${color}55`};
+    "></div>
+    ${eq.magnitude >= 5 ? `<div style="position:absolute;bottom:-14px;font-size:9px;font-family:monospace;color:${color};text-shadow:0 0 3px #0c0f14,0 0 3px #0c0f14;white-space:nowrap;font-weight:700;">M${eq.magnitude.toFixed(1)}</div>` : ""}
+  `;
+  el.title = `M${eq.magnitude.toFixed(1)} ${eq.magnitudeType} · ${eq.depthKm.toFixed(0)}km · ${eq.locationDescription}`;
 }

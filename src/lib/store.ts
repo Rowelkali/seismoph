@@ -129,7 +129,7 @@ export const useSeismo = create<SeismoState>((set) => ({
     cities: true,
     provinces: false,
     faults: true,
-    terrain: true,
+    terrain: false,
     heatmap: false,
     intensityRings: true,
   },

@@ -29,17 +29,58 @@ export function AboutPanel({ className }: { className?: string }) {
               substantially better user experience for exploring earthquake information.
             </p>
             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-              <strong>Live earthquake data is sourced from the U.S. Geological Survey (USGS) Earthquake
-              Hazards Program</strong> via the public FDSN-WS API — real, authoritative, global seismic
-              data covering the Philippine region. The platform also ships with a documented adapter for
-              <strong> DOST-PHIVOLCS</strong> (the Philippine-authoritative source), activated when a
-              confirmed authorized endpoint is configured. It does <strong>not</strong> replace PHIVOLCS,
-              does not predict earthquakes, and does not generate emergency warnings.
+              It does <strong>not</strong> replace PHIVOLCS, does not predict earthquakes, and does not
+              generate emergency warnings.
             </p>
           </Card>
 
-          <Card icon={Database} title="Data sources">
-            <ul className="space-y-2">
+          <Card icon={Database} title="Source hierarchy — how data flows">
+            <pre className="overflow-x-auto rounded-md border border-border bg-background/60 p-3 text-[10px] leading-tight font-mono text-muted-foreground">
+{`  DOST-PHIVOLCS
+       │
+ Primary source
+       │
+       ▼
+┌─────────────────┐
+│  SEISMO PH      │
+│  Data Ingestion │
+└────────┬────────┘
+         │
+    PostgreSQL
+         │
+   WebSocket/SSE
+         │
+         ▼
+    Your 3D Map
+
+
+  USGS
+   │
+ Secondary source
+   │
+   ▼
+Cross-reference /
+backup monitoring`}
+            </pre>
+            <div className="mt-3 space-y-2">
+              <div className="rounded-md border border-primary/30 bg-primary/5 p-2.5">
+                <p className="text-xs font-semibold text-primary">① Primary: DOST-PHIVOLCS</p>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                  The Philippine-authoritative source. When configured (set <code className="font-mono">PHIVOLCS_API_URL</code>),
+                  PHIVOLCS events take precedence. If a USGS event matches a PHIVOLCS event (same time ±90s, distance ≤50km),
+                  the PHIVOLCS record is authoritative; the USGS record is used only for cross-reference.
+                </p>
+              </div>
+              <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-2.5">
+                <p className="text-xs font-semibold text-emerald-400">② Secondary: USGS</p>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                  Always active. Provides real, live, real-time global seismic data covering the Philippines
+                  via the FDSN-WS public API. Serves as backup monitoring and cross-reference when PHIVOLCS
+                  is not configured or is temporarily unavailable.
+                </p>
+              </div>
+            </div>
+            <ul className="mt-3 space-y-2">
               {sources.map((s) => (
                 <li key={s.id} className="rounded-md border border-border bg-card/30 p-2.5">
                   <div className="flex items-center justify-between gap-2">
