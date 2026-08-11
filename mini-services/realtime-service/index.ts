@@ -28,9 +28,10 @@ import { mapEarthquake } from "../../src/lib/mappers";
 import type { WsServerEvent, EarthquakeEvent } from "../../src/lib/types";
 
 const PORT = 3003;
-const POLL_INTERVAL_MS = Number(process.env.RT_POLL_INTERVAL_MS ?? 60_000); // 60s
+const POLL_INTERVAL_MS = Number(process.env.RT_POLL_INTERVAL_MS ?? 30_000); // 30s
 const STATUS_INTERVAL_MS = 30_000;
-const LOOKBACK_MS = 5 * 60 * 1000; // fetch events updated in last 5 min
+const LOOKBACK_MS = 10 * 60 * 1000; // fetch events updated in last 10 min
+const MIN_MAG = 2.0; // capture more frequent real micro/macro events
 
 const httpServer = createServer((req, res) => {
   if (req.url === "/__health") {
@@ -56,7 +57,7 @@ async function pollUsgs() {
     const since = lastPollAt ?? new Date(Date.now() - LOOKBACK_MS);
     // Use a slightly earlier start to avoid boundary misses.
     const sinceBuffered = new Date(since.getTime() - 30_000);
-    const adapter = new UsgsAdapter({ since: sinceBuffered, minMagnitude: 2.5 });
+    const adapter = new UsgsAdapter({ since: sinceBuffered, minMagnitude: MIN_MAG });
     const result = await adapter.fetch();
 
     if (!result.ok) {
@@ -193,11 +194,11 @@ io.on("connection", (socket) => {
 });
 
 httpServer.listen(PORT, () => {
-  logger.info("rt.listen", { port: PORT, source: "USGS (live)", pollIntervalMs: POLL_INTERVAL_MS }, "realtime-service");
+  logger.info("rt.listen", { port: PORT, source: "USGS (live)", pollIntervalMs: POLL_INTERVAL_MS, minMag: MIN_MAG }, "realtime-service");
   console.log(`\n✓ SEISMO PH realtime service on port ${PORT}`);
   console.log(`  WebSocket:  io("/?XTransformPort=${PORT}")`);
   console.log(`  Source:      USGS FDSN-WS (REAL, live)`);
-  console.log(`  Poll:        every ${POLL_INTERVAL_MS / 1000}s\n`);
+  console.log(`  Poll:        every ${POLL_INTERVAL_MS / 1000}s, min magnitude ${MIN_MAG}\n`);
 
   // Initial poll shortly after boot.
   setTimeout(pollUsgs, 2000);

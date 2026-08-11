@@ -43,3 +43,21 @@ Stage Summary:
 - Realtime: polls USGS FDSN-WS every 60s for real new events; broadcasts via WebSocket. No synthetic generation.
 - Verified in Agent Browser: page shows real earthquakes (e.g. "M4.6 MB 103km — 13 km ESE of San Miguel, Philippines, REVIEWED"), no DEVELOPMENT DATA banner, USGS:HEALTHY in topbar, footer says "USGS (live, real-time)", detail panel shows real data with depth cross-section. Lint clean, zero console errors.
 - The PHIVOLCS adapter remains as the documented production integration point (set PHIVOLCS_API_URL to activate); USGS is the live working source providing real, authoritative, real-time Philippine earthquake data.
+
+---
+Task ID: REALTIME-UX
+Agent: Z.ai Code (main)
+Task: Make the platform feel live (realtime pop-ups + sound), hide detail panel when nothing selected, add PHIVOLCS-style alert siren.
+
+Work Log:
+- Built useAlertSound hook (src/hooks/use-alert-sound.ts): Web Audio API two-tone alternating siren (970Hz↔670Hz, 6 cycles). No audio file bundled — synthesized on demand. Respects soundEnabled setting. Unlocks AudioContext on first user gesture (browser policy). Three intensities: major (M6+), minor (M4-5.9), test.
+- Added soundEnabled to AppSettings store (default true). Added sound toggle button in TopBar (Volume2/VolumeX icon). Added "Alert sound" setting row with Test button in Settings sheet.
+- Added live-replay system to store: popped[] (events visible on map via animation), lastPopped (for pulse animation), pushPopped/setPopped. 
+- Rewrote page.tsx: (1) Detail panel now ONLY renders when an earthquake is selected — no more persistent placeholder covering the map. Map gets full width when nothing is selected. Bottom stream expands to full width too. (2) Auto-replays the 12 most recent real earthquakes on first load — they pop onto the map one-by-one (700ms interval) with alert sound for M4.5+ events. (3) "Replay recent" button (top-right) re-triggers the animation anytime. (4) Realtime onCreated now pushes to popped (animates on map) + triggers sound for M4.0+ + toast notification. (5) Alert subscriptions trigger major siren.
+- Updated realtime service: poll interval 60s→30s, min magnitude 2.5→2.0, lookback 5min→10min. Captures more frequent real events.
+- Restarted dev server (had crashed) and realtime service.
+
+Stage Summary:
+- Three user complaints addressed: (1) platform now feels live — recent real earthquakes animate onto the map on load + "Replay recent" button + 30s USGS polling for genuine new events; (2) detail panel only appears when you click an earthquake (map is no longer covered); (3) emergency siren plays on new significant earthquakes (M4.0+) with toggle + test button.
+- Verified in Agent Browser: page renders, detail panel hidden initially, opens on click, closes on close button. Replay button works. Sound test button works (no console errors). USGS:HEALTHY shown. Lint clean.
+- Real PH earthquakes are genuinely rare (~1-3/day M2.5+), so the replay animation + 30s polling + sound on new events is the honest way to make it feel live while waiting for real new quakes.

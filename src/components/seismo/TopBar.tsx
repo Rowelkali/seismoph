@@ -5,10 +5,11 @@ import { SeismoLogo } from "./SeismoLogo";
 import { StatusIndicator } from "./StatusIndicator";
 import { useSeismo } from "@/lib/store";
 import { useSources } from "@/hooks/use-seismo-data";
+import { useAlertSound } from "@/hooks/use-alert-sound";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
-import { Menu, Search, Bell, Settings, Wifi, WifiOff } from "lucide-react";
+import { Menu, Search, Bell, Settings, Volume2, VolumeX, Wifi, WifiOff } from "lucide-react";
 import { LeftNav } from "./LeftNav";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +26,10 @@ export function TopBar({ wsConnected, onOpenSearch }: { wsConnected: boolean; on
 
   const phivolcsSource = sources.find((s) => s.name === "DOST-PHIVOLCS");
   const phivolcsState = phivolcsSource?.status === "HEALTHY" ? "live" : phivolcsSource?.status === "DEGRADED" ? "degraded" : phivolcsSource?.status === "DOWN" ? "down" : "unknown";
+
+  const soundEnabled = useSeismo((s) => s.settings.soundEnabled);
+  const toggleSound = useSeismo((s) => s.setSetting);
+  const { test: testSound } = useAlertSound();
 
   return (
     <header className="z-30 flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background/90 px-3 backdrop-blur">
@@ -78,6 +83,17 @@ export function TopBar({ wsConnected, onOpenSearch }: { wsConnected: boolean; on
         {wsConnected ? <Wifi className="h-4 w-4 text-emerald-400" /> : <WifiOff className="h-4 w-4 text-muted-foreground" />}
       </span>
 
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-9 w-9"
+        aria-label={soundEnabled ? "Mute alert sound" : "Enable alert sound"}
+        title={soundEnabled ? "Alert sound on" : "Alert sound muted"}
+        onClick={() => toggleSound("soundEnabled", !soundEnabled)}
+      >
+        {soundEnabled ? <Volume2 className="h-4 w-4 text-primary" /> : <VolumeX className="h-4 w-4 text-muted-foreground" />}
+      </Button>
+
       <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="Notifications">
         <Bell className="h-4 w-4" />
       </Button>
@@ -106,6 +122,20 @@ export function TopBar({ wsConnected, onOpenSearch }: { wsConnected: boolean; on
               checked={settings.reducedMotion}
               onCheckedChange={() => toggleSetting("reducedMotion")}
             />
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium">Alert sound</p>
+                <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+                  Plays an emergency siren when a significant new earthquake (M4.0+) is detected.
+                </p>
+              </div>
+              <div className="flex flex-col items-end gap-1.5">
+                <Switch checked={settings.soundEnabled} onCheckedChange={(c) => toggleSound("soundEnabled", c)} aria-label="Alert sound" />
+                <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={testSound}>
+                  Test
+                </Button>
+              </div>
+            </div>
             <SettingRow
               label="Development data banner"
               description="Show the prominent DEV-SEED fixture banner."

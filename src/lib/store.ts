@@ -45,6 +45,7 @@ export interface AppSettings {
   dataSaver: boolean;
   reducedMotion: boolean;
   showDevBanner: boolean;
+  soundEnabled: boolean;
   units: "metric";
 }
 
@@ -75,6 +76,15 @@ interface SeismoState {
   setWsConnected: (b: boolean) => void;
   stream: EarthquakeEvent[]; // recent realtime events (capped)
   pushStreamEvent: (e: EarthquakeEvent) => void;
+
+  // "popped" set: earthquakes currently visible on the map (for the live
+  // replay animation, events are added here one-by-one with a pulse).
+  popped: EarthquakeEvent[];
+  pushPopped: (e: EarthquakeEvent) => void;
+  setPopped: (e: EarthquakeEvent[]) => void;
+  /** A freshly-popped event to animate (cleared after animation). */
+  lastPopped: EarthquakeEvent | null;
+  setLastPopped: (e: EarthquakeEvent | null) => void;
 
   // history filters
   filters: HistoryFilters;
@@ -131,6 +141,7 @@ export const useSeismo = create<SeismoState>((set) => ({
     dataSaver: false,
     reducedMotion: Boolean(prefersReduced),
     showDevBanner: true,
+    soundEnabled: true,
     units: "metric",
   },
   toggleSetting: (k) =>
@@ -145,6 +156,16 @@ export const useSeismo = create<SeismoState>((set) => ({
     set((s) => ({
       stream: [e, ...s.stream].slice(0, 60),
     })),
+
+  popped: [],
+  pushPopped: (e) =>
+    set((s) => ({
+      popped: s.popped.some((x) => x.id === e.id) ? s.popped : [...s.popped, e],
+      lastPopped: e,
+    })),
+  setPopped: (e) => set({ popped: e, lastPopped: null }),
+  lastPopped: null,
+  setLastPopped: (e) => set({ lastPopped: e }),
 
   filters: defaultFilters,
   setFilters: (f) => set((s) => ({ filters: { ...s.filters, ...f } })),

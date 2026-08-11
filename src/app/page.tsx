@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useSeismo } from "@/lib/store";
 import { useRecentEarthquakes, useRealtime, useEarthquake } from "@/hooks/use-seismo-data";
+import { useAlertSound } from "@/hooks/use-alert-sound";
 import { TopBar } from "@/components/seismo/TopBar";
 import { DevDataBanner } from "@/components/seismo/DevDataBanner";
 import { LeftNav, MobileNav } from "@/components/seismo/LeftNav";
@@ -19,7 +20,7 @@ import { SafetyPanel } from "@/components/panels/SafetyPanel";
 import { AboutPanel } from "@/components/panels/AboutPanel";
 import type { EarthquakeEvent } from "@/lib/types";
 import {
-  Crosshair, Plus, Minus, Mountain, Compass, X, Layers as LayersIcon,
+  Plus, Minus, Mountain, Compass, X, Layers as LayersIcon, Radio, Play,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -33,6 +34,9 @@ const EarthquakeMap = dynamic(
 const MAP_VIEWS = new Set(["live", "earthquakes", "history", "locations", "alerts"]);
 const OVERLAY_VIEWS = new Set(["analytics", "safety", "about"]);
 
+const REPLAY_COUNT = 12; // how many recent events to animate on load
+const REPLAY_INTERVAL_MS = 700;
+
 export default function Home() {
   const view = useSeismo((s) => s.view);
   const setView = useSeismo((s) => s.setView);
@@ -44,39 +48,96 @@ export default function Home() {
   const stream = useSeismo((s) => s.stream);
   const pushStreamEvent = useSeismo((s) => s.pushStreamEvent);
   const setWsConnected = useSeismo((s) => s.setWsConnected);
+  const popped = useSeismo((s) => s.popped);
+  const pushPopped = useSeismo((s) => s.pushPopped);
+  const setPopped = useSeismo((s) => s.setPopped);
 
-  const { data: recent, asOf, reload } = useRecentEarthquakes(120);
+  const { data: recent, asOf } = useRecentEarthquakes(120);
   const { data: selectedFull, loading: selLoading } = useEarthquake(selected?.id ?? null);
+  const { trigger: triggerSound } = useAlertSound();
 
   const [command, setCommand] = useState<{ action: "reset" | "zoomIn" | "zoomOut"; nonce: number } | null>(null);
   const [layerOpen, setLayerOpen] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
+  const [replaying, setReplaying] = useState(false);
+  const replayDoneRef = useRef(false);
 
   // Merge realtime stream events into the map dataset (most recent first, dedup).
+  // The map shows `popped` (events that have "appeared" via replay or realtime)
+  // plus any realtime stream events, plus the rest of recent as already-present.
   const mapEarthquakes = useMemo(() => {
     const seen = new Set<string>();
     const merged: EarthquakeEvent[] = [];
+    // Newest first: realtime stream
     for (const e of stream) {
       if (!seen.has(e.id)) { seen.add(e.id); merged.push(e); }
     }
+    // Then popped (replayed) events
+    for (const e of popped) {
+      if (!seen.has(e.id)) { seen.add(e.id); merged.push(e); }
+    }
+    // Then the rest of recent
     for (const e of recent) {
       if (!seen.has(e.id)) { seen.add(e.id); merged.push(e); }
     }
     return merged;
-  }, [recent, stream]);
+  }, [recent, stream, popped]);
 
-  // WebSocket realtime.
+  // --- Live replay: animate the most recent real earthquakes appearing ---
+  const runReplay = useCallback(() => {
+    if (recent.length === 0) return;
+    setReplaying(true);
+    setPopped([]); // clear, then add one-by-one
+    // Take the most recent REPLAY_COUNT events, oldest→newest, so the newest
+    // appears last (most dramatic).
+    const batch = recent.slice(0, REPLAY_COUNT).reverse();
+    let i = 0;
+    const tick = () => {
+      if (i >= batch.length) {
+        setReplaying(false);
+        return;
+      }
+      const eq = batch[i];
+      pushPopped(eq);
+      // Sound for significant events during replay.
+      if (eq.magnitude >= 4.5) triggerSound(eq.magnitude >= 6 ? "major" : "minor");
+      i++;
+      setTimeout(tick, REPLAY_INTERVAL_MS);
+    };
+    setTimeout(tick, 400);
+  }, [recent, setPopped, pushPopped, triggerSound]);
+
+  // Auto-run replay once on first load of real data.
+  useEffect(() => {
+    if (replayDoneRef.current || recent.length === 0) return;
+    replayDoneRef.current = true;
+    runReplay();
+  }, [recent, runReplay]);
+
+  // WebSocket realtime — genuine new events from USGS poll.
   const { connected } = useRealtime({
     onCreated: (eq) => {
       pushStreamEvent(eq);
-      // Auto-select significant new events briefly? No — just toast.
-      if (eq.magnitude >= 5) {
-        toast.success(`New M${eq.magnitude.toFixed(1)} earthquake`, { description: eq.locationDescription });
+      pushPopped(eq);
+      // Alert sound + toast for significant events.
+      if (eq.magnitude >= 4.0) {
+        triggerSound(eq.magnitude >= 6 ? "major" : "minor");
+        toast.success(`⚠ M${eq.magnitude.toFixed(1)} earthquake detected`, {
+          description: eq.locationDescription,
+          duration: 8000,
+          action: { label: "Inspect", onClick: () => select(eq) },
+        });
+      } else {
+        toast.info(`New M${eq.magnitude.toFixed(1)} event`, {
+          description: eq.locationDescription,
+          duration: 4000,
+        });
       }
     },
     onAlert: (a) => {
-      toast.warning(`Alert triggered: M${a.earthquake.magnitude.toFixed(1)}`, {
+      triggerSound("major");
+      toast.warning(`🔔 Alert: M${a.earthquake.magnitude.toFixed(1)}`, {
         description: a.earthquake.locationDescription,
+        duration: 10000,
         action: { label: "View", onClick: () => select(a.earthquake) },
       });
     },
@@ -94,16 +155,13 @@ export default function Home() {
 
   const isMap = MAP_VIEWS.has(view);
   const isOverlay = OVERLAY_VIEWS.has(view);
+  const hasSelection = Boolean(selected);
 
-  // reduced-motion class on root for CSS hook
   const rootClass = cn("flex h-[100dvh] flex-col overflow-hidden", settings.reducedMotion && "seismo-reduced-motion");
 
   return (
     <div className={rootClass}>
       <TopBar wsConnected={connected} onOpenSearch={() => { setView("locations"); }} />
-
-      {/* Search overlay trigger when locations view requested from topbar */}
-      {searchOpen && <div />}
 
       {!isOverlay && <DevDataBanner />}
 
@@ -139,9 +197,29 @@ export default function Home() {
           </aside>
         )}
 
-        {/* Layer control (top-right) */}
+        {/* Layer control + Replay button (top-right) */}
         {isMap && (
           <div className="absolute right-3 top-3 z-20 flex flex-col items-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={runReplay}
+              disabled={replaying}
+              className="glass-strong h-9 gap-1.5 rounded-lg border-border px-3 text-xs"
+              title="Replay the most recent real earthquakes appearing on the map"
+            >
+              {replaying ? (
+                <>
+                  <Radio className="h-3.5 w-3.5 animate-seismo-blink text-primary" />
+                  <span className="font-mono uppercase tracking-wider">Live…</span>
+                </>
+              ) : (
+                <>
+                  <Play className="h-3.5 w-3.5 text-primary" />
+                  <span>Replay recent</span>
+                </>
+              )}
+            </Button>
             <Button
               variant="outline"
               size="icon"
@@ -167,9 +245,9 @@ export default function Home() {
           </div>
         )}
 
-        {/* Right detail panel (desktop) */}
-        {isMap && (
-          <aside className="absolute right-3 top-3 bottom-3 z-20 hidden w-96 md:block" style={{ right: "calc(3rem + 1.5rem)" }}>
+        {/* Right detail panel (desktop) — ONLY when an earthquake is selected */}
+        {isMap && hasSelection && (
+          <aside className="absolute top-3 bottom-3 z-20 hidden w-96 md:block" style={{ right: "calc(3rem + 1.5rem)" }}>
             <DetailPanel
               earthquake={selectedFull ?? selected}
               loading={selLoading}
@@ -179,15 +257,18 @@ export default function Home() {
           </aside>
         )}
 
-        {/* Bottom event stream */}
+        {/* Bottom event stream — full width when no selection, narrowed when panel open */}
         {isMap && (
-          <div className="absolute bottom-3 left-3 right-3 z-20 md:left-[21rem] md:right-[26rem]">
-            <EventStream events={stream.length > 0 ? stream : mapEarthquakes.slice(0, 12)} onPick={(eq) => select(eq)} connected={connected} />
+          <div className={cn(
+            "absolute bottom-3 left-3 right-3 z-20 md:left-[21rem]",
+            hasSelection ? "md:right-[26rem]" : "md:right-3",
+          )}>
+            <EventStream events={stream.length > 0 ? stream : recent.slice(0, 12)} onPick={(eq) => select(eq)} connected={connected} />
           </div>
         )}
 
-        {/* Mobile detail bottom sheet */}
-        {isMap && selected && (
+        {/* Mobile detail bottom sheet — only when selected */}
+        {isMap && hasSelection && (
           <div className="absolute inset-x-0 bottom-0 z-30 md:hidden">
             <div className="glass-strong max-h-[70vh] overflow-y-auto scroll-slim rounded-t-xl border-t border-border">
               <div className="flex justify-center pt-1.5">
@@ -198,8 +279,8 @@ export default function Home() {
           </div>
         )}
 
-        {/* Mobile bottom nav */}
-        {isMap && (
+        {/* Mobile bottom nav — hidden while a detail sheet is open */}
+        {isMap && !hasSelection && (
           <div className="absolute inset-x-0 bottom-0 z-10 md:hidden">
             <MobileNav />
           </div>
