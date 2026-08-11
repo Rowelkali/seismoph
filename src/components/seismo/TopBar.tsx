@@ -1,0 +1,128 @@
+"use client";
+
+import { useState } from "react";
+import { SeismoLogo } from "./SeismoLogo";
+import { StatusIndicator } from "./StatusIndicator";
+import { useSeismo } from "@/lib/store";
+import { useSources } from "@/hooks/use-seismo-data";
+import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Switch } from "@/components/ui/switch";
+import { Menu, Search, Bell, Settings, Wifi, WifiOff } from "lucide-react";
+import { LeftNav } from "./LeftNav";
+import { cn } from "@/lib/utils";
+
+export function TopBar({ wsConnected, onOpenSearch }: { wsConnected: boolean; onOpenSearch: () => void }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settings = useSeismo((s) => s.settings);
+  const toggleSetting = useSeismo((s) => s.toggleSetting);
+  const { data: sources } = useSources();
+  const devActive = sources.some((s) => s.name === "DEV-SEED" && s.status === "HEALTHY");
+
+  const sourceStatus = sources.find((s) => s.name === "DOST-PHIVOLCS");
+  const phivolcsState = sourceStatus?.status === "HEALTHY" ? "live" : sourceStatus?.status === "DEGRADED" ? "degraded" : sourceStatus?.status === "DOWN" ? "down" : "unknown";
+
+  return (
+    <header className="z-30 flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background/90 px-3 backdrop-blur">
+      {/* mobile menu */}
+      <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
+        <SheetTrigger asChild>
+          <Button variant="ghost" size="icon" className="md:hidden h-9 w-9" aria-label="Open navigation">
+            <Menu className="h-5 w-5" />
+          </Button>
+        </SheetTrigger>
+        <SheetContent side="left" className="w-72 p-3">
+          <SheetHeader>
+            <SheetTitle className="text-sm">Navigation</SheetTitle>
+          </SheetHeader>
+          <LeftNav className="mt-3" />
+        </SheetContent>
+      </Sheet>
+
+      <SeismoLogo size={30} />
+
+      <div className="ml-1 hidden items-center gap-2 sm:flex">
+        <StatusIndicator status={wsConnected ? "live" : "connecting"} label={wsConnected ? "LIVE" : "CONNECTING"} />
+        {devActive && (
+          <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-400">
+            DEV DATA
+          </span>
+        )}
+        <span className="hidden items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground lg:flex">
+          PHIVOLCS:
+          <StatusIndicator status={phivolcsState} label={phivolcsState === "live" ? "HEALTHY" : phivolcsState.toUpperCase()} />
+        </span>
+      </div>
+
+      <div className="flex-1" />
+
+      {/* search */}
+      <Button variant="outline" size="sm" onClick={onOpenSearch} className="hidden md:inline-flex h-8 max-w-xs flex-1 justify-start text-muted-foreground">
+        <Search className="h-3.5 w-3.5" />
+        <span className="truncate">Search Philippine cities…</span>
+      </Button>
+      <Button variant="ghost" size="icon" className="md:hidden h-9 w-9" onClick={onOpenSearch} aria-label="Search">
+        <Search className="h-5 w-5" />
+      </Button>
+
+      {/* ws indicator (mobile) */}
+      <span className="md:hidden">
+        {wsConnected ? <Wifi className="h-4 w-4 text-emerald-400" /> : <WifiOff className="h-4 w-4 text-muted-foreground" />}
+      </span>
+
+      <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="Notifications">
+        <Bell className="h-4 w-4" />
+      </Button>
+
+      {/* settings */}
+      <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <SheetTrigger asChild>
+          <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="Settings">
+            <Settings className="h-4 w-4" />
+          </Button>
+        </SheetTrigger>
+        <SheetContent side="right" className="w-80 p-4">
+          <SheetHeader>
+            <SheetTitle className="text-sm">Settings</SheetTitle>
+          </SheetHeader>
+          <div className="mt-4 space-y-4">
+            <SettingRow
+              label="Data Saver Mode"
+              description="Reduce map effects, animations and update frequency for low-bandwidth connections."
+              checked={settings.dataSaver}
+              onCheckedChange={() => toggleSetting("dataSaver")}
+            />
+            <SettingRow
+              label="Reduced motion"
+              description="Disable pulse, ring and blink animations."
+              checked={settings.reducedMotion}
+              onCheckedChange={() => toggleSetting("reducedMotion")}
+            />
+            <SettingRow
+              label="Development data banner"
+              description="Show the prominent DEV-SEED fixture banner."
+              checked={settings.showDevBanner}
+              onCheckedChange={() => toggleSetting("showDevBanner")}
+            />
+            <div className="rounded-md border border-border bg-muted/30 p-2.5 text-[11px] text-muted-foreground">
+              All times shown in Philippine Standard Time (PHT, UTC+8). Distances are geodesic (haversine).
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+    </header>
+  );
+}
+
+function SettingRow({ label, description, checked, onCheckedChange }: { label: string; description: string; checked: boolean; onCheckedChange: () => void }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div>
+        <p className="text-sm font-medium">{label}</p>
+        <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{description}</p>
+      </div>
+      <Switch checked={checked} onCheckedChange={onCheckedChange} aria-label={label} />
+    </div>
+  );
+}

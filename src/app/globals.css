@@ -1,0 +1,244 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  /* SEISMO PH magnitude severity ramp (amber → red; never indigo/blue) */
+  --color-sev-minor: var(--sev-minor);
+  --color-sev-light: var(--sev-light);
+  --color-sev-moderate: var(--sev-moderate);
+  --color-sev-strong: var(--sev-strong);
+  --color-sev-major: var(--sev-major);
+  --color-sev-great: var(--sev-great);
+}
+
+/* SEISMO PH — dark scientific theme is the DEFAULT (:root).
+   The .dark class mirrors it so next-themes + explicit dark toggling both work. */
+:root,
+.dark {
+  --radius: 0.625rem;
+  /* Deep charcoal / near-black with a faint warm tint */
+  --background: oklch(0.16 0.008 240);
+  --foreground: oklch(0.96 0.004 240);
+  --card: oklch(0.205 0.01 240);
+  --card-foreground: oklch(0.96 0.004 240);
+  --popover: oklch(0.225 0.012 240);
+  --popover-foreground: oklch(0.96 0.004 240);
+  /* Primary = warm amber (scientific accent, not indigo/blue) */
+  --primary: oklch(0.82 0.16 75);
+  --primary-foreground: oklch(0.18 0.02 75);
+  --secondary: oklch(0.26 0.012 240);
+  --secondary-foreground: oklch(0.96 0.004 240);
+  --muted: oklch(0.24 0.01 240);
+  --muted-foreground: oklch(0.7 0.012 240);
+  --accent: oklch(0.3 0.02 200);
+  --accent-foreground: oklch(0.96 0.004 240);
+  --destructive: oklch(0.66 0.22 25);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.82 0.16 75);
+  /* Chart palette: amber, teal, orange, rose, lime — no indigo/blue */
+  --chart-1: oklch(0.78 0.17 75);
+  --chart-2: oklch(0.72 0.13 185);
+  --chart-3: oklch(0.7 0.19 45);
+  --chart-4: oklch(0.64 0.22 18);
+  --chart-5: oklch(0.75 0.17 140);
+  --sidebar: oklch(0.185 0.01 240);
+  --sidebar-foreground: oklch(0.96 0.004 240);
+  --sidebar-primary: oklch(0.82 0.16 75);
+  --sidebar-primary-foreground: oklch(0.18 0.02 75);
+  --sidebar-accent: oklch(0.26 0.012 240);
+  --sidebar-accent-foreground: oklch(0.96 0.004 240);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-ring: oklch(0.82 0.16 75);
+
+  /* Magnitude severity ramp (amber → deep red) */
+  --sev-minor: oklch(0.7 0.02 240);      /* slate */
+  --sev-light: oklch(0.78 0.12 185);     /* teal */
+  --sev-moderate: oklch(0.82 0.15 90);   /* amber */
+  --sev-strong: oklch(0.74 0.18 55);     /* orange */
+  --sev-major: oklch(0.64 0.22 30);      /* red */
+  --sev-great: oklch(0.52 0.24 18);      /* deep red */
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body {
+    @apply bg-background text-foreground;
+  }
+  body {
+    font-feature-settings: "ss01", "cv01", "tnum";
+  }
+}
+
+/* ---- SEISMO PH design-system utilities ----------------------------------- */
+
+@layer utilities {
+  /* Glass panel: subtle translucent surface with hairline border + faint glow */
+  .glass {
+    background: color-mix(in oklch, var(--card) 78%, transparent);
+    backdrop-filter: blur(10px) saturate(120%);
+    -webkit-backdrop-filter: blur(10px) saturate(120%);
+    border: 1px solid var(--border);
+  }
+  .glass-strong {
+    background: color-mix(in oklch, var(--card) 92%, transparent);
+    backdrop-filter: blur(14px) saturate(130%);
+    -webkit-backdrop-filter: blur(14px) saturate(130%);
+    border: 1px solid var(--border);
+  }
+  /* Restrained amber glow for active/primary emphasis */
+  .glow-amber {
+    box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) 30%, transparent),
+      0 0 24px -6px color-mix(in oklch, var(--primary) 45%, transparent);
+  }
+  .glow-danger {
+    box-shadow: 0 0 0 1px color-mix(in oklch, var(--destructive) 40%, transparent),
+      0 0 28px -4px color-mix(in oklch, var(--destructive) 55%, transparent);
+  }
+  /* Tabular numerals for data tables */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Severity text/bg helpers (paired with icons/labels — never color alone) */
+  .sev-minor { color: var(--sev-minor); }
+  .sev-light { color: var(--sev-light); }
+  .sev-moderate { color: var(--sev-moderate); }
+  .sev-strong { color: var(--sev-strong); }
+  .sev-major { color: var(--sev-major); }
+  .sev-great { color: var(--sev-great); }
+  .bg-sev-minor { background-color: var(--sev-minor); }
+  .bg-sev-light { background-color: var(--sev-light); }
+  .bg-sev-moderate { background-color: var(--sev-moderate); }
+  .bg-sev-strong { background-color: var(--sev-strong); }
+  .bg-sev-major { background-color: var(--sev-major); }
+  .bg-sev-great { background-color: var(--sev-great); }
+
+  /* Custom slim scrollbar for data panels */
+  .scroll-slim {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklch, var(--muted-foreground) 35%, transparent) transparent;
+  }
+  .scroll-slim::-webkit-scrollbar { width: 8px; height: 8px; }
+  .scroll-slim::-webkit-scrollbar-track { background: transparent; }
+  .scroll-slim::-webkit-scrollbar-thumb {
+    background: color-mix(in oklch, var(--muted-foreground) 30%, transparent);
+    border-radius: 9999px;
+  }
+  .scroll-slim::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklch, var(--muted-foreground) 50%, transparent);
+  }
+
+  /* Pulse animation for epicenter markers (disabled under reduced motion) */
+  @keyframes seismo-pulse {
+    0% { transform: scale(0.6); opacity: 0.9; }
+    70% { transform: scale(2.4); opacity: 0; }
+    100% { transform: scale(2.4); opacity: 0; }
+  }
+  .animate-seismo-pulse {
+    animation: seismo-pulse 2.4s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+  }
+  @keyframes seismo-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+  .animate-seismo-blink {
+    animation: seismo-blink 1.6s ease-in-out infinite;
+  }
+  /* Expanding seismic ring on new event */
+  @keyframes seismo-ring {
+    0% { transform: scale(0.2); opacity: 0.8; }
+    100% { transform: scale(3.2); opacity: 0; }
+  }
+  .animate-seismo-ring {
+    animation: seismo-ring 2.8s ease-out infinite;
+  }
+
+  /* Grid background for scientific feel */
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, color-mix(in oklch, var(--muted-foreground) 8%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in oklch, var(--muted-foreground) 8%, transparent) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+}
+
+/* Reduced-motion: disable animations entirely */
+@media (prefers-reduced-motion: reduce) {
+  .animate-seismo-pulse,
+  .animate-seismo-blink,
+  .animate-seismo-ring {
+    animation: none !important;
+  }
+  * {
+    scroll-behavior: auto !important;
+  }
+}
+.seismo-reduced-motion .animate-seismo-pulse,
+.seismo-reduced-motion .animate-seismo-blink,
+.seismo-reduced-motion .animate-seismo-ring {
+  animation: none !important;
+}
+
+/* MapLibre canvas should fill its container */
+.maplibregl-canvas {
+  outline: none !important;
+}
+.maplibregl-ctrl-attrib {
+  background: color-mix(in oklch, var(--background) 70%, transparent) !important;
+  color: var(--muted-foreground) !important;
+  font-size: 10px !important;
+}
+.maplibregl-ctrl-attrib a {
+  color: var(--muted-foreground) !important;
+}
+.maplibregl-popup-content {
+  background: var(--popover) !important;
+  color: var(--popover-foreground) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+}
+.maplibregl-popup-tip {
+  border-top-color: var(--border) !important;
+}

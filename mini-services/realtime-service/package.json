@@ -1,0 +1,14 @@
+{
+  "name": "seismo-ph-realtime",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SEISMO PH realtime earthquake event service (socket.io). Emits earthquake.created + system.status; periodically ingests new DEV-SEED fixtures so the platform demonstrates real-time behavior in development.",
+  "scripts": {
+    "dev": "bun --hot index.ts",
+    "start": "bun index.ts"
+  },
+  "dependencies": {
+    "socket.io": "^4.8.3",
+    "@prisma/client": "^6.11.1"
+  }
+}

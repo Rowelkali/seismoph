@@ -1,0 +1,154 @@
+// SEISMO PH — global client state (Zustand).
+
+import { create } from "zustand";
+import type { EarthquakeEvent } from "@/lib/types";
+
+export type AppView =
+  | "live"
+  | "earthquakes"
+  | "history"
+  | "analytics"
+  | "locations"
+  | "alerts"
+  | "safety"
+  | "about";
+
+export interface LayerState {
+  earthquakes: boolean;
+  cities: boolean;
+  provinces: boolean;
+  faults: boolean;
+  terrain: boolean;
+  heatmap: boolean;
+  intensityRings: boolean;
+}
+
+export interface UserLocation {
+  id?: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+}
+
+export interface HistoryFilters {
+  from: string; // ISO date
+  to: string;
+  minMagnitude: number;
+  maxMagnitude: number;
+  minDepth: number;
+  maxDepth: number;
+  region: string;
+  eventType: string;
+}
+
+export interface AppSettings {
+  dataSaver: boolean;
+  reducedMotion: boolean;
+  showDevBanner: boolean;
+  units: "metric";
+}
+
+interface SeismoState {
+  // navigation
+  view: AppView;
+  setView: (v: AppView) => void;
+
+  // selection
+  selectedEarthquake: EarthquakeEvent | null;
+  selectEarthquake: (e: EarthquakeEvent | null) => void;
+
+  userLocation: UserLocation | null;
+  setUserLocation: (l: UserLocation | null) => void;
+
+  // map layers
+  layers: LayerState;
+  toggleLayer: (k: keyof LayerState) => void;
+  setLayers: (l: Partial<LayerState>) => void;
+
+  // settings
+  settings: AppSettings;
+  toggleSetting: (k: keyof AppSettings) => void;
+  setSetting: <K extends keyof AppSettings>(k: K, v: AppSettings[K]) => void;
+
+  // realtime
+  wsConnected: boolean;
+  setWsConnected: (b: boolean) => void;
+  stream: EarthquakeEvent[]; // recent realtime events (capped)
+  pushStreamEvent: (e: EarthquakeEvent) => void;
+
+  // history filters
+  filters: HistoryFilters;
+  setFilters: (f: Partial<HistoryFilters>) => void;
+
+  // mobile drawer for selected earthquake
+  detailOpenMobile: boolean;
+  setDetailOpenMobile: (b: boolean) => void;
+}
+
+const today = new Date();
+const thirtyDaysAgo = new Date(today.getTime() - 30 * 86400000);
+
+const defaultFilters: HistoryFilters = {
+  from: thirtyDaysAgo.toISOString().slice(0, 10),
+  to: today.toISOString().slice(0, 10),
+  minMagnitude: 3,
+  maxMagnitude: 10,
+  minDepth: 0,
+  maxDepth: 800,
+  region: "",
+  eventType: "",
+};
+
+const prefersReduced =
+  typeof window !== "undefined" &&
+  window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+
+export const useSeismo = create<SeismoState>((set) => ({
+  view: "live",
+  setView: (v) => set({ view: v }),
+
+  selectedEarthquake: null,
+  selectEarthquake: (e) =>
+    set({ selectedEarthquake: e, detailOpenMobile: Boolean(e) }),
+
+  userLocation: null,
+  setUserLocation: (l) => set({ userLocation: l }),
+
+  layers: {
+    earthquakes: true,
+    cities: true,
+    provinces: false,
+    faults: true,
+    terrain: true,
+    heatmap: false,
+    intensityRings: true,
+  },
+  toggleLayer: (k) =>
+    set((s) => ({ layers: { ...s.layers, [k]: !s.layers[k] } })),
+  setLayers: (l) => set((s) => ({ layers: { ...s.layers, ...l } })),
+
+  settings: {
+    dataSaver: false,
+    reducedMotion: Boolean(prefersReduced),
+    showDevBanner: true,
+    units: "metric",
+  },
+  toggleSetting: (k) =>
+    set((s) => ({ settings: { ...s.settings, [k]: !s.settings[k] } })),
+  setSetting: (k, v) =>
+    set((s) => ({ settings: { ...s.settings, [k]: v } })),
+
+  wsConnected: false,
+  setWsConnected: (b) => set({ wsConnected: b }),
+  stream: [],
+  pushStreamEvent: (e) =>
+    set((s) => ({
+      stream: [e, ...s.stream].slice(0, 60),
+    })),
+
+  filters: defaultFilters,
+  setFilters: (f) => set((s) => ({ filters: { ...s.filters, ...f } })),
+
+  detailOpenMobile: false,
+  setDetailOpenMobile: (b) => set({ detailOpenMobile: b }),
+}));

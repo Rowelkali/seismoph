@@ -1,0 +1,142 @@
+// SEISMO PH — Prisma schema
+// NOTE: This sandbox uses SQLite (PostgreSQL + PostGIS is the production target —
+// see docs). Geographic queries (distance, nearest, bounding-box) are computed
+// in the application layer using the haversine formula in src/lib/geo.ts.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// An earthquake event from an authoritative source (PHIVOLCS) or, in local
+/// development, a clearly-labeled synthetic fixture (source = "DEV-SEED").
+model Earthquake {
+  id                  String             @id @default(cuid())
+  /// Stable identifier from the upstream source. Used for idempotent ingestion.
+  externalId          String             @unique
+  /// Origin of the record: "DOST-PHIVOLCS" (production) | "DEV-SEED" (development fixtures)
+  source              String
+  /// UTC origin time of the earthquake.
+  originTime          DateTime
+  latitude            Float
+  longitude           Float
+  /// Focal depth in kilometers (>= 0).
+  depthKm             Float
+  magnitude           Float
+  /// e.g. "Mw", "Ms", "Mb", "Ml"
+  magnitudeType       String             @default("Mw")
+  /// Human-readable epicenter description from the source.
+  locationDescription String
+  /// "TECTONIC" | "VOLCANIC" | "INDUCED" | "UNKNOWN"
+  eventType           String             @default("TECTONIC")
+  /// "REVIEWED" | "AUTOMATIC" | "PRELIMINARY"
+  status              String             @default("PRELIMINARY")
+  /// SHA-256 of normalized source payload, for change detection / dedup.
+  rawSourceHash       String?
+  dataVersion         Int                @default(1)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  intensities   IntensityReport[]
+  notifications NotificationEvent[]
+
+  @@index([originTime])
+  @@index([magnitude])
+  @@index([latitude, longitude])
+  @@index([source])
+  @@index([status])
+}
+
+/// Reported intensity (PEIS) at a named locality. Always sourced — never invented.
+model IntensityReport {
+  id            String     @id @default(cuid())
+  earthquakeId  String
+  locality      String
+  city          String?
+  municipality  String?
+  province      String?
+  latitude      Float?
+  longitude     Float?
+  /// PEIS value as roman numeral string: "I".."X"
+  intensity     String
+  intensityScale String    @default("PEIS")
+  reportTime    DateTime   @default(now())
+  source        String     @default("DOST-PHIVOLCS")
+  earthquake    Earthquake @relation(fields: [earthquakeId], references: [id], onDelete: Cascade)
+
+  @@index([earthquakeId])
+  @@index([province])
+  @@index([intensity])
+}
+
+/// Philippine geographic reference locations for search & distance features.
+model Location {
+  id           String  @id @default(cuid())
+  name         String
+  /// "BARANGAY" | "MUNICIPALITY" | "CITY" | "PROVINCE" | "REGION"
+  type         String
+  region       String?
+  province     String?
+  municipality String?
+  latitude     Float
+  longitude    Float
+  population   Int?
+
+  @@index([name])
+  @@index([type])
+  @@index([province])
+  @@index([region])
+}
+
+/// User-configurable alert subscription. Anonymous (no account) in this build.
+model AlertSubscription {
+  id           String   @id @default(cuid())
+  userId       String?
+  label        String
+  locationName String?
+  latitude     Float?
+  longitude    Float?
+  radiusKm     Float    @default(50)
+  minMagnitude Float    @default(4.0)
+  /// Comma-separated channel list: "BROWSER,IN_APP"
+  channels     String   @default("BROWSER,IN_APP")
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([enabled])
+  @@index([minMagnitude])
+}
+
+/// Audit log of delivered notifications (dedup + history).
+model NotificationEvent {
+  id              String     @id @default(cuid())
+  earthquakeId    String
+  subscriptionId  String?
+  notificationType String    @default("IN_APP")
+  deliveredAt     DateTime   @default(now())
+  deliveryStatus  String     @default("DELIVERED")
+  earthquake      Earthquake @relation(fields: [earthquakeId], references: [id], onDelete: Cascade)
+
+  @@index([earthquakeId])
+  @@index([subscriptionId])
+}
+
+/// Tracks the health/freshness of each upstream data source.
+model DataSource {
+  id                  String   @id @default(cuid())
+  name                String   @unique
+  endpoint            String?
+  lastSuccessAt       DateTime?
+  lastFailureAt       DateTime?
+  status              String   @default("UNKNOWN") // "HEALTHY" | "DEGRADED" | "DOWN" | "UNKNOWN"
+  version             String?
+  attribution         String
+  lastEventExternalId String?
+
+  @@index([status])
+}
