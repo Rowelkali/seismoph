@@ -8,6 +8,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useAlertSound } from "@/hooks/use-alert-sound";
 import { TopBar } from "@/components/seismo/TopBar";
 import { DevDataBanner } from "@/components/seismo/DevDataBanner";
+import { BasemapSelector } from "@/components/seismo/BasemapSelector";
 import { LeftNav, MobileNav } from "@/components/seismo/LeftNav";
 import { LayerControl } from "@/components/seismo/LayerControl";
 import { EventStream } from "@/components/seismo/EventStream";
@@ -73,6 +74,18 @@ export default function Home() {
     return merged;
   }, [recent, stream]);
 
+  // Determine the single LATEST earthquake (by origin_time) for map highlight.
+  const latestId = useMemo(() => {
+    if (mapEarthquakes.length === 0) return null;
+    let latest: EarthquakeEvent | null = null;
+    for (const eq of mapEarthquakes) {
+      if (!latest || new Date(eq.originTime) > new Date(latest.originTime)) {
+        latest = eq;
+      }
+    }
+    return latest?.id ?? null;
+  }, [mapEarthquakes]);
+
   // WebSocket realtime — genuinely new events from the PHIVOLCS 60s poll trigger
   // the pop animation, alert sound, toast notification, AND React Query cache
   // invalidation so the sidebar "Recent Earthquakes" list updates immediately.
@@ -136,10 +149,12 @@ export default function Home() {
           <EarthquakeMap
             earthquakes={mapEarthquakes}
             selectedId={selected?.id}
+            latestId={settings.highlightLatest ? latestId : null}
             onSelect={(eq) => select(eq)}
             layers={layers}
             reducedMotion={settings.reducedMotion}
             dataSaver={settings.dataSaver}
+            basemap={settings.basemap}
             flyTo={flyTo}
             command={command}
             className="absolute inset-0 h-full w-full"
@@ -162,7 +177,7 @@ export default function Home() {
           </aside>
         )}
 
-        {/* Layer control (top-right) */}
+        {/* Layer control + Basemap selector (top-right) */}
         {isMap && (
           <div className="absolute right-3 top-3 z-20 flex flex-col items-end gap-2">
             <Button
@@ -176,6 +191,7 @@ export default function Home() {
             </Button>
             <div className={cn("hidden md:block", layerOpen && "block")}>
               <LayerControl className="w-52" />
+              <BasemapSelector className="mt-2 w-52" />
             </div>
           </div>
         )}

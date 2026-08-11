@@ -46,6 +46,8 @@ export interface AppSettings {
   reducedMotion: boolean;
   showDevBanner: boolean;
   soundEnabled: boolean;
+  basemap: "dark" | "light" | "satellite" | "topo";
+  highlightLatest: boolean;
   units: "metric";
 }
 
@@ -142,6 +144,8 @@ export const useSeismo = create<SeismoState>((set) => ({
     reducedMotion: Boolean(prefersReduced),
     showDevBanner: true,
     soundEnabled: true,
+    basemap: "dark",
+    highlightLatest: true,
     units: "metric",
   },
   toggleSetting: (k) =>

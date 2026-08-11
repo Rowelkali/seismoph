@@ -13,6 +13,7 @@ import { PH_CENTER, PH_BOUNDS } from "@/lib/geo";
 interface Props {
   earthquakes: EarthquakeEvent[];
   selectedId?: string | null;
+  latestId?: string | null;
   onSelect?: (eq: EarthquakeEvent) => void;
   layers: {
     earthquakes: boolean;
@@ -25,10 +26,129 @@ interface Props {
   };
   reducedMotion?: boolean;
   dataSaver?: boolean;
+  basemap?: BasemapId;
   flyTo?: { lon: number; lat: number; zoom?: number } | null;
   command?: { action: "reset" | "zoomIn" | "zoomOut"; nonce: number } | null;
   className?: string;
 }
+
+// ---- Basemap styles ----
+// Users can switch between these via the basemap selector in the map controls.
+export type BasemapId = "dark" | "light" | "satellite" | "topo";
+
+interface BasemapDef {
+  id: BasemapId;
+  label: string;
+  description: string;
+  style: {
+    version: number;
+    sources: Record<string, unknown>;
+    layers: Record<string, unknown>[];
+  };
+}
+
+const BASEMAPS: Record<BasemapId, BasemapDef> = {
+  dark: {
+    id: "dark",
+    label: "Dark",
+    description: "CARTO dark matter — scientific dark theme",
+    style: {
+      version: 8,
+      sources: {
+        "carto-dark": {
+          type: "raster",
+          tiles: [
+            "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+            "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+            "https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+            "https://d.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+          ],
+          tileSize: 256,
+          attribution: '© OpenStreetMap contributors © CARTO',
+          maxzoom: 20,
+        },
+      },
+      layers: [
+        { id: "background", type: "background", paint: { "background-color": "#0c0f14" } },
+        { id: "basemap-tiles", type: "raster", source: "carto-dark", paint: { "raster-opacity": 0.92 } },
+      ],
+    },
+  },
+  light: {
+    id: "light",
+    label: "Light",
+    description: "CARTO positron — clean light theme",
+    style: {
+      version: 8,
+      sources: {
+        "carto-light": {
+          type: "raster",
+          tiles: [
+            "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+            "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+            "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+            "https://d.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+          ],
+          tileSize: 256,
+          attribution: '© OpenStreetMap contributors © CARTO',
+          maxzoom: 20,
+        },
+      },
+      layers: [
+        { id: "background", type: "background", paint: { "background-color": "#f5f5f5" } },
+        { id: "basemap-tiles", type: "raster", source: "carto-light", paint: { "raster-opacity": 0.95 } },
+      ],
+    },
+  },
+  satellite: {
+    id: "satellite",
+    label: "Satellite",
+    description: "Esri World Imagery — aerial/satellite view",
+    style: {
+      version: 8,
+      sources: {
+        "esri-satellite": {
+          type: "raster",
+          tiles: [
+            "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+          ],
+          tileSize: 256,
+          attribution: '© Esri, Maxar, Earthstar Geographics',
+          maxzoom: 19,
+        },
+      },
+      layers: [
+        { id: "background", type: "background", paint: { "background-color": "#000000" } },
+        { id: "basemap-tiles", type: "raster", source: "esri-satellite", paint: { "raster-opacity": 1.0 } },
+      ],
+    },
+  },
+  topo: {
+    id: "topo",
+    label: "Topographic",
+    description: "OpenTopoMap — terrain & contours",
+    style: {
+      version: 8,
+      sources: {
+        "opentopomap": {
+          type: "raster",
+          tiles: [
+            "https://a.tile.opentopomap.org/{z}/{x}/{y}.png",
+            "https://b.tile.opentopomap.org/{z}/{x}/{y}.png",
+            "https://c.tile.opentopomap.org/{z}/{x}/{y}.png",
+          ],
+          tileSize: 256,
+          attribution: '© OpenStreetMap contributors, SRTM | OpenTopoMap (CC-BY-SA)',
+          maxzoom: 17,
+        },
+      },
+      layers: [
+        { id: "background", type: "background", paint: { "background-color": "#e8e4d8" } },
+        { id: "basemap-tiles", type: "raster", source: "opentopomap", paint: { "raster-opacity": 1.0 } },
+      ],
+    },
+  },
+};
 
 const SEV_HEX: Record<string, string> = {
   minor: "#7c8a99",
@@ -39,40 +159,18 @@ const SEV_HEX: Record<string, string> = {
   great: "#b8271a",
 };
 
-// Inline dark raster style (no token, reliable). CARTO dark basemap.
-const DARK_STYLE = {
-  version: 8,
-  sources: {
-    "carto-dark": {
-      type: "raster" as const,
-      tiles: [
-        "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-        "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-        "https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-        "https://d.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-      ],
-      tileSize: 256,
-      attribution:
-        '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>',
-      maxzoom: 20,
-    },
-  },
-  layers: [
-    { id: "background", type: "background" as const, paint: { "background-color": "#0c0f14" } },
-    { id: "carto-dark-tiles", type: "raster" as const, source: "carto-dark", paint: { "raster-opacity": 0.92 } },
-  ],
-};
-
 const PH_FIT_BOUNDS: LngLatBoundsLike = [117.5, 4.5, 127.5, 21.0];
 const MAX_MARKERS = 150;
 
 export function EarthquakeMap({
   earthquakes,
   selectedId,
+  latestId,
   onSelect,
   layers,
   reducedMotion,
   dataSaver,
+  basemap = "dark",
   flyTo,
   command,
   className,
@@ -96,12 +194,15 @@ export function EarthquakeMap({
     byIdRef.current = byId;
   }, [byId]);
 
+  // Resolve the active basemap style object.
+  const activeBasemap = BASEMAPS[basemap] ?? BASEMAPS.dark;
+
   // ---- one-time map init ----
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     const map = new MLMap({
       container: containerRef.current,
-      style: DARK_STYLE,
+      style: activeBasemap.style as MLMap["style"],
       center: [PH_CENTER.lon, PH_CENTER.lat],
       zoom: 5.2,
       pitch: 0,
@@ -187,6 +288,18 @@ export function EarthquakeMap({
     };
   }, []);
 
+  // ---- switch basemap style when `basemap` prop changes ----
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const target = BASEMAPS[basemap] ?? BASEMAPS.dark;
+    try {
+      map.setStyle(target.style as MLMap["style"]);
+    } catch {
+      /* style switch can fail if map is mid-load; ignore */
+    }
+  }, [basemap]);
+
   // ---- create / update earthquake HTML markers ----
   // Uses MapLibre Marker (DOM elements) instead of GeoJSON circle layers.
   // DOM markers don't require the WebGL worker to process GeoJSON data,
@@ -219,14 +332,16 @@ export function EarthquakeMap({
       for (const eq of visible) {
         const sev = severityOf(eq.magnitude);
         const color = SEVERITY_COLOR[sev];
+        const isSelected = eq.id === selectedId;
+        const isLatest = eq.id === latestId;
         const existing = markersRef.current.get(eq.id);
         if (existing) {
-          // Update position + color in case data changed
+          // Update position + style in case data changed
           existing.setLngLat([eq.longitude, eq.latitude]);
           const el = existing.getElement();
-          updateMarkerStyle(el, eq, color, eq.id === selectedId, reducedMotion);
+          updateMarkerStyle(el, eq, color, isSelected, reducedMotion, isLatest);
         } else {
-          const el = createMarkerElement(eq, color, eq.id === selectedId, reducedMotion);
+          const el = createMarkerElement(eq, color, isSelected, reducedMotion, isLatest);
           el.addEventListener("click", (e) => {
             e.stopPropagation();
             onSelectRef.current?.(eq);
@@ -241,7 +356,7 @@ export function EarthquakeMap({
 
     // Run immediately (the map exists at this point) + on move for culling
     updateMarkers();
-  }, [earthquakes, layers.earthquakes, selectedId, reducedMotion]);
+  }, [earthquakes, layers.earthquakes, selectedId, latestId, reducedMotion]);
 
   // ---- city markers ----
   const cityMarkersRef = useRef<Marker[]>([]);
@@ -464,14 +579,15 @@ function createMarkerElement(
   color: string,
   isSelected: boolean,
   reducedMotion?: boolean,
+  isLatest?: boolean,
 ): HTMLElement {
   const el = document.createElement("div");
-  el.className = "seismo-eq-marker";
+  el.className = "seismo-eq-marker" + (isLatest ? " seismo-eq-latest" : "");
   el.style.cssText = `
     cursor: pointer; display: flex; align-items: center; justify-content: center;
     width: ${markerRadius(eq.magnitude) * 2}px; height: ${markerRadius(eq.magnitude) * 2}px;
   `;
-  updateMarkerStyle(el, eq, color, isSelected, reducedMotion);
+  updateMarkerStyle(el, eq, color, isSelected, reducedMotion, isLatest);
   return el;
 }
 
@@ -481,22 +597,29 @@ function updateMarkerStyle(
   color: string,
   isSelected: boolean,
   reducedMotion?: boolean,
+  isLatest?: boolean,
 ) {
   const r = markerRadius(eq.magnitude);
-  el.style.width = `${r * 2}px`;
-  el.style.height = `${r * 2}px`;
-  const showRing = eq.magnitude >= 4.5 && !reducedMotion;
-  const ringSize = r * 3;
+  // The latest earthquake gets a larger marker + pulsing ring + "LATEST" label
+  // so it stands out from all other markers on the map.
+  const effectiveR = isLatest ? r + 4 : r;
+  el.style.width = `${effectiveR * 2}px`;
+  el.style.height = `${effectiveR * 2}px`;
+  const showRing = (eq.magnitude >= 4.5 || isLatest) && !reducedMotion;
+  const ringSize = isLatest ? effectiveR * 4 : effectiveR * 3;
+  const showPulse = isLatest || (!reducedMotion && eq.magnitude >= 4);
+  const showLabel = eq.magnitude >= 5 || isLatest;
+
   el.innerHTML = `
-    ${showRing ? `<div style="position:absolute;width:${ringSize}px;height:${ringSize}px;border-radius:50%;border:1.5px solid ${color};opacity:0.4;${reducedMotion ? "" : "animation:seismo-ring 2.8s ease-out infinite;"}"></div>` : ""}
-    ${!reducedMotion && eq.magnitude >= 4 ? `<div style="position:absolute;width:${r * 2}px;height:${r * 2}px;border-radius:50%;background:${color};opacity:0.3;animation:seismo-pulse 2.4s cubic-bezier(0.2,0.6,0.3,1) infinite;"></div>` : ""}
+    ${showRing ? `<div style="position:absolute;width:${ringSize}px;height:${ringSize}px;border-radius:50%;border:${isLatest ? "2px" : "1.5px"} solid ${isLatest ? "#ffffff" : color};opacity:${isLatest ? 0.7 : 0.4};${reducedMotion ? "" : "animation:seismo-ring 2.8s ease-out infinite;"}"></div>` : ""}
+    ${showPulse ? `<div style="position:absolute;width:${effectiveR * 2}px;height:${effectiveR * 2}px;border-radius:50%;background:${color};opacity:${isLatest ? 0.4 : 0.3};animation:seismo-pulse ${isLatest ? "1.8s" : "2.4s"} cubic-bezier(0.2,0.6,0.3,1) infinite;"></div>` : ""}
     <div style="
-      position: relative; width: ${r * 2}px; height: ${r * 2}px; border-radius: 50%;
-      background: ${color}; opacity: 0.9;
-      border: ${isSelected ? "2px solid #ffffff" : "1.2px solid rgba(0,0,0,0.4)"};
-      box-shadow: ${isSelected ? `0 0 12px ${color}, 0 0 4px #ffffff` : `0 0 6px ${color}55`};
+      position: relative; width: ${effectiveR * 2}px; height: ${effectiveR * 2}px; border-radius: 50%;
+      background: ${color}; opacity: ${isLatest ? 1.0 : 0.9};
+      border: ${isSelected ? "2px solid #ffffff" : isLatest ? "2.5px solid #ffffff" : "1.2px solid rgba(0,0,0,0.4)"};
+      box-shadow: ${isSelected || isLatest ? `0 0 16px ${color}, 0 0 6px #ffffff, 0 0 2px #ffffff` : `0 0 6px ${color}55`};
     "></div>
-    ${eq.magnitude >= 5 ? `<div style="position:absolute;bottom:-14px;font-size:9px;font-family:monospace;color:${color};text-shadow:0 0 3px #0c0f14,0 0 3px #0c0f14;white-space:nowrap;font-weight:700;">M${eq.magnitude.toFixed(1)}</div>` : ""}
+    ${showLabel ? `<div style="position:absolute;bottom:${isLatest ? -20 : -14}px;left:50%;transform:translateX(-50%);font-size:${isLatest ? 10 : 9}px;font-family:monospace;color:${isLatest ? "#ffffff" : color};background:${isLatest ? color : "transparent"};padding:${isLatest ? "1px 4px" : "0"};border-radius:3px;text-shadow:0 0 3px #0c0f14,0 0 3px #0c0f14;white-space:nowrap;font-weight:700;">${isLatest ? "LATEST M" + eq.magnitude.toFixed(1) : "M" + eq.magnitude.toFixed(1)}</div>` : ""}
   `;
-  el.title = `M${eq.magnitude.toFixed(1)} ${eq.magnitudeType} · ${eq.depthKm.toFixed(0)}km · ${eq.locationDescription}`;
+  el.title = `${isLatest ? "★ LATEST · " : ""}M${eq.magnitude.toFixed(1)} ${eq.magnitudeType} · ${eq.depthKm.toFixed(0)}km · ${eq.locationDescription}`;
 }

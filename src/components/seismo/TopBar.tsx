@@ -126,6 +126,12 @@ export function TopBar({ wsConnected, onOpenSearch }: { wsConnected: boolean; on
               checked={settings.reducedMotion}
               onCheckedChange={() => toggleSetting("reducedMotion")}
             />
+            <SettingRow
+              label="Highlight latest earthquake"
+              description="Show a pulsing highlighted marker for the single newest earthquake on the map."
+              checked={settings.highlightLatest}
+              onCheckedChange={() => toggleSetting("highlightLatest")}
+            />
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-medium">Alert sound</p>
