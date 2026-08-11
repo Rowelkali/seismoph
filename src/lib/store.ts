@@ -21,6 +21,8 @@ export interface LayerState {
   terrain: boolean;
   heatmap: boolean;
   intensityRings: boolean;
+  userLocation: boolean;
+  hazards: boolean;
 }
 
 export interface UserLocation {
@@ -28,6 +30,7 @@ export interface UserLocation {
   name: string;
   latitude: number;
   longitude: number;
+  accuracy?: number; // meters, from Geolocation API
 }
 
 export interface HistoryFilters {
@@ -134,6 +137,8 @@ export const useSeismo = create<SeismoState>((set) => ({
     terrain: false,
     heatmap: false,
     intensityRings: true,
+    userLocation: true,
+    hazards: false,
   },
   toggleLayer: (k) =>
     set((s) => ({ layers: { ...s.layers, [k]: !s.layers[k] } })),

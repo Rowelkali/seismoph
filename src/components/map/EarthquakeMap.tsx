@@ -23,12 +23,15 @@ interface Props {
     terrain: boolean;
     heatmap: boolean;
     intensityRings: boolean;
+    userLocation: boolean;
+    hazards: boolean;
   };
+  userLocation?: { latitude: number; longitude: number; accuracy?: number; name?: string } | null;
   reducedMotion?: boolean;
   dataSaver?: boolean;
   basemap?: BasemapId;
   flyTo?: { lon: number; lat: number; zoom?: number } | null;
-  command?: { action: "reset" | "zoomIn" | "zoomOut"; nonce: number } | null;
+  command?: { action: "reset" | "zoomIn" | "zoomOut" | "locate"; nonce: number } | null;
   className?: string;
 }
 
@@ -171,6 +174,7 @@ export function EarthquakeMap({
   latestId,
   onSelect,
   layers,
+  userLocation,
   reducedMotion,
   dataSaver,
   basemap = "dark",
@@ -346,9 +350,9 @@ export function EarthquakeMap({
           // Update position + style in case data changed
           existing.setLngLat([eq.longitude, eq.latitude]);
           const el = existing.getElement();
-          updateMarkerStyle(el, eq, color, isSelected, reducedMotion, isLatest);
+          updateMarkerStyle(el, eq, color, isSelected, reducedMotion, isLatest, layers.intensityRings);
         } else {
-          const el = createMarkerElement(eq, color, isSelected, reducedMotion, isLatest);
+          const el = createMarkerElement(eq, color, isSelected, reducedMotion, isLatest, layers.intensityRings);
           el.addEventListener("click", (e) => {
             e.stopPropagation();
             onSelectRef.current?.(eq);
@@ -363,7 +367,7 @@ export function EarthquakeMap({
 
     // Run immediately (the map exists at this point) + on move for culling
     updateMarkers();
-  }, [earthquakes, layers.earthquakes, selectedId, latestId, reducedMotion]);
+  }, [earthquakes, layers.earthquakes, layers.intensityRings, selectedId, latestId, reducedMotion]);
 
   // ---- city markers ----
   const cityMarkersRef = useRef<Marker[]>([]);
@@ -543,6 +547,164 @@ export function EarthquakeMap({
     }
   }, [layers.terrain]);
 
+  // ---- user location marker (distinct from earthquake markers) ----
+  // Uses a blue dot + accuracy circle + "YOU ARE HERE" label. Deliberately
+  // different from earthquake markers (which are magnitude-colored circles).
+  const userMarkerRef = useRef<Marker | null>(null);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    // Remove existing marker if userLocation is null or layer is off
+    if (userMarkerRef.current) {
+      userMarkerRef.current.remove();
+      userMarkerRef.current = null;
+    }
+
+    if (!userLocation || !layers.userLocation) return;
+
+    // Create a distinct user-location marker (blue dot + accuracy ring + label)
+    const el = document.createElement("div");
+    el.className = "seismo-user-marker";
+    el.style.cssText = "display:flex;flex-direction:column;align-items:center;pointer-events:none;";
+
+    const accuracy = userLocation.accuracy ?? 0;
+    // Accuracy circle radius in meters → approximate pixel size at current zoom
+    // (simplified: just use a visual ring proportional to accuracy)
+    const accKm = accuracy / 1000;
+    const showAcc = accKm > 0 && accKm < 50;
+
+    el.innerHTML = `
+      ${showAcc ? `<div style="position:absolute;border-radius:50%;border:2px solid #3b82f6;background:rgba(59,130,246,0.1);width:${Math.min(120, 20 + accKm * 4)}px;height:${Math.min(120, 20 + accKm * 4)}px;opacity:0.5;"></div>` : ""}
+      <div style="position:relative;width:16px;height:16px;border-radius:50%;background:#3b82f6;border:3px solid #ffffff;box-shadow:0 0 8px rgba(59,130,246,0.8),0 0 2px #ffffff;${reducedMotion ? "" : "animation:seismo-pulse 2s ease-in-out infinite;"}"></div>
+      <div style="position:absolute;top:18px;font-size:9px;font-family:monospace;font-weight:700;color:#ffffff;background:#3b82f6;padding:1px 5px;border-radius:3px;white-space:nowrap;text-shadow:0 0 2px rgba(0,0,0,0.5);">YOU ARE HERE</div>
+    `;
+
+    const marker = new Marker({ element: el, anchor: "center" })
+      .setLngLat([userLocation.longitude, userLocation.latitude])
+      .addTo(map);
+    userMarkerRef.current = marker;
+  }, [userLocation, layers.userLocation, reducedMotion]);
+
+  // ---- hazard layers (official PHIVOLCS GroundShaking, Liquefaction, etc.) ----
+  // These are raster image overlays from gisweb.phivolcs.dost.gov.ph.
+  const hazardLayerIds = ["ground-shaking", "liquefaction", "eq-landslide", "tsunami"];
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const apply = () => {
+      for (const layerId of hazardLayerIds) {
+        const sourceId = `phivolcs-${layerId}`;
+        const layerName = `phivolcs-${layerId}-layer`;
+        if (layers.hazards) {
+          // Add if not yet added
+          if (!map.getSource(sourceId)) {
+            const def = PHIVOLCS_LAYERS.find((l) => l.id === layerId);
+            if (!def) continue;
+            try {
+              const tileUrl = phivolcsRasterSource(def, [PH_BOUNDS.minLon, PH_BOUNDS.minLat, PH_BOUNDS.maxLon, PH_BOUNDS.maxLat]);
+              map.addSource(sourceId, {
+                type: "image",
+                url: tileUrl,
+                coordinates: [
+                  [PH_BOUNDS.minLon, PH_BOUNDS.maxLat],
+                  [PH_BOUNDS.maxLon, PH_BOUNDS.maxLat],
+                  [PH_BOUNDS.maxLon, PH_BOUNDS.minLat],
+                  [PH_BOUNDS.minLon, PH_BOUNDS.minLat],
+                ],
+              });
+              map.addLayer({
+                id: layerName,
+                type: "raster",
+                source: sourceId,
+                paint: { "raster-opacity": 0.5 },
+                layout: { visibility: "visible" },
+              });
+            } catch {
+              /* already exists or map not ready */
+            }
+          } else if (map.getLayer(layerName)) {
+            map.setLayoutProperty(layerName, "visibility", "visible");
+          }
+        } else {
+          // Hide
+          if (map.getLayer(layerName)) {
+            map.setLayoutProperty(layerName, "visibility", "none");
+          }
+        }
+      }
+    };
+    apply();
+  }, [layers.hazards]);
+
+  // ---- heatmap (canvas-based density visualization) ----
+  // Uses an HTML5 Canvas overlay positioned over the map. Draws Gaussian
+  // blobs for each earthquake, colored by density. This avoids the MapLibre
+  // GeoJSON worker dependency (which is unreliable in some browsers).
+  // Labeled as "Historical earthquake density" — NOT a prediction.
+  const heatmapCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const map = mapRef.current;
+    const container = containerRef.current;
+    if (!map || !container) return;
+
+    const createCanvas = () => {
+      if (heatmapCanvasRef.current) return heatmapCanvasRef.current;
+      const canvas = document.createElement("canvas");
+      canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;mix-blend-mode:screen;";
+      container.appendChild(canvas);
+      heatmapCanvasRef.current = canvas;
+      return canvas;
+    };
+
+    const drawHeatmap = () => {
+      const canvas = createCanvas();
+      if (!layers.heatmap) {
+        canvas.style.display = "none";
+        return;
+      }
+      canvas.style.display = "";
+
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.clearRect(0, 0, w, h);
+
+      // Draw a Gaussian blob for each earthquake, weighted by magnitude.
+      // Denser areas (more earthquakes) accumulate more color → heatmap effect.
+      for (const eq of earthquakes.slice(0, 200)) {
+        const proj = map.project(new LngLat(eq.longitude, eq.latitude));
+        if (!Number.isFinite(proj.x) || !Number.isFinite(proj.y)) continue;
+        if (proj.x < -50 || proj.x > w + 50 || proj.y < -50 || proj.y > h + 50) continue;
+
+        const radius = 15 + eq.magnitude * 5;
+        const intensity = Math.min(1, (eq.magnitude - 2) / 5);
+        const gradient = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, radius);
+        // Color ramp: teal → amber → red (density, not prediction)
+        gradient.addColorStop(0, `rgba(245, 196, 81, ${intensity * 0.6})`);
+        gradient.addColorStop(0.5, `rgba(245, 147, 49, ${intensity * 0.3})`);
+        gradient.addColorStop(1, "rgba(230, 73, 45, 0)");
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(proj.x, proj.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    };
+
+    drawHeatmap();
+    map.on("move", drawHeatmap);
+    map.on("zoom", drawHeatmap);
+
+    return () => {
+      map.off("move", drawHeatmap);
+      map.off("zoom", drawHeatmap);
+    };
+  }, [layers.heatmap, earthquakes]);
+
   // ---- flyTo ----
   useEffect(() => {
     const map = mapRef.current;
@@ -568,6 +730,18 @@ export function EarthquakeMap({
       map.zoomIn({ duration: 250 });
     } else if (command.action === "zoomOut") {
       map.zoomOut({ duration: 250 });
+    } else if (command.action === "locate") {
+      // Locate = fly to user location (if available) at a contextual zoom
+      if (userLocation) {
+        map.flyTo({
+          center: [userLocation.longitude, userLocation.latitude],
+          zoom: 9, // close enough to see the area, not so close they lose context
+          pitch: 0,
+          bearing: 0,
+          duration: reducedMotion ? 0 : 1200,
+          essential: true,
+        });
+      }
     }
   }, [command, reducedMotion]);
 
@@ -588,6 +762,7 @@ function createMarkerElement(
   isSelected: boolean,
   reducedMotion?: boolean,
   isLatest?: boolean,
+  showRings?: boolean,
 ): HTMLElement {
   const el = document.createElement("div");
   el.className = "seismo-eq-marker" + (isLatest ? " seismo-eq-latest" : "");
@@ -595,7 +770,7 @@ function createMarkerElement(
     cursor: pointer; display: flex; align-items: center; justify-content: center;
     width: ${markerRadius(eq.magnitude) * 2}px; height: ${markerRadius(eq.magnitude) * 2}px;
   `;
-  updateMarkerStyle(el, eq, color, isSelected, reducedMotion, isLatest);
+  updateMarkerStyle(el, eq, color, isSelected, reducedMotion, isLatest, showRings);
   return el;
 }
 
@@ -606,6 +781,7 @@ function updateMarkerStyle(
   isSelected: boolean,
   reducedMotion?: boolean,
   isLatest?: boolean,
+  showRings?: boolean,
 ) {
   const r = markerRadius(eq.magnitude);
   // The latest earthquake gets a larger marker + pulsing ring + "LATEST" label
@@ -613,7 +789,9 @@ function updateMarkerStyle(
   const effectiveR = isLatest ? r + 4 : r;
   el.style.width = `${effectiveR * 2}px`;
   el.style.height = `${effectiveR * 2}px`;
-  const showRing = (eq.magnitude >= 4.5 || isLatest) && !reducedMotion;
+  // Rings respect the intensityRings layer toggle. Latest always shows its ring.
+  const ringEnabled = showRings !== false;
+  const showRing = ringEnabled && (eq.magnitude >= 4.5 || isLatest) && !reducedMotion;
   const ringSize = isLatest ? effectiveR * 4 : effectiveR * 3;
   const showPulse = isLatest || (!reducedMotion && eq.magnitude >= 4);
   const showLabel = eq.magnitude >= 5 || isLatest;

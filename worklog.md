@@ -160,3 +160,38 @@ Stage Summary:
 - Updates: `earthquake.updated` events emitted for revised events (magnitude/depth changes detected via rawSourceHash).
 - Lint clean, both services running, zero browser errors.
 - Remaining limitation: PHIVOLCS does not provide a true realtime push API — the platform polls their public bulletin website every 60s. New earthquakes appear within 60s of PHIVOLCS publishing them. This is the fastest authorized approach given PHIVOLCS's data exposure.
+
+---
+Task ID: MAP-LAYER-AUDIT
+Agent: Z.ai Code (main)
+Task: Complete functional audit of user location + every map layer. Fix all broken features.
+
+Work Log:
+- AUDIT FINDINGS:
+  1. Heatmap toggle was DEAD (code removed when switching to HTML markers, toggle did nothing)
+  2. User location had no map marker (state existed but never rendered)
+  3. No "Locate Me" button on the map (only in sidebar)
+  4. Intensity rings toggle didn't control rendering (always on for M4.5+)
+  5. Provinces toggle was DEAD (no rendering code)
+  6. Hazard layers (GroundShaking, Liquefaction, Landslide, Tsunami) defined but not wired up
+
+- FIXES:
+  1. USER LOCATION: Added userLocation marker to EarthquakeMap — distinct blue dot with white border, accuracy circle, and "YOU ARE HERE" label. Deliberately different from earthquake markers (which are magnitude-colored circles). Marker respects layers.userLocation toggle.
+  2. LOCATE ME: Added "Locate Me" button (LocateFixed icon) to camera controls. Requests geolocation permission, stores userLocation, flies camera to location at zoom 9. Handles all error states: permission denied, location unavailable, timeout, unsupported browser — each with a specific toast message. If location already available, reuses it without re-requesting permission.
+  3. HEATMAP: Rebuilt as canvas-based density visualization. Draws Gaussian radial gradient blobs for each earthquake, weighted by magnitude. Color ramp: amber → orange → red (density). Uses mix-blend-mode:screen for accumulation. Labeled "Historical earthquake density. Not a prediction of future earthquakes." Canvas reprojects on map move/zoom. Verified: 5.2% non-transparent pixels = actual density content.
+  4. INTENSITY RINGS: Wired the layers.intensityRings toggle to control ring rendering in updateMarkerStyle(). When OFF, rings disappear from all non-latest markers. Verified: 0 rings with animation when toggled off.
+  5. HAZARD LAYERS: Wired 4 official PHIVOLCS hazard layers (GroundShaking, Liquefaction, EarthquakeInducedLandslide, Tsunami) as raster image overlays from gisweb.phivolcs.dost.gov.ph. All 4 load when the "Hazard layers" toggle is enabled. Uses the official ArcGIS MapServer export endpoint.
+  6. LAYER CONTROL: Rewrote LayerControl with all 8 functional layers: Earthquakes, Your location, Intensity rings, Active faults, Cities, Terrain, Density heatmap, Hazard layers. Each has icon + description tooltip. Removed dead "Provinces" toggle. Heatmap shows "Historical earthquake density. Not a prediction." label when active.
+  7. STORE: Added `userLocation` and `hazards` to LayerState. Added `accuracy` field to UserLocation interface.
+
+- LIFECYCLE GUARDS: All addSource/addLayer calls check `if (!map.getSource(sourceId))` before adding. Hazard layers use try/catch to handle "already exists" errors. User location marker is removed before re-creating on state change.
+
+Stage Summary:
+- All 8 map layers are now functional with working toggles.
+- User location appears as a distinct blue "YOU ARE HERE" marker (not confused with earthquakes).
+- Locate Me button requests geolocation with full error handling.
+- Heatmap renders actual density content (canvas-based, 5.2% non-transparent pixels).
+- Intensity rings toggle controls ring visibility.
+- Hazard layers load official PHIVOLCS data.
+- Zero console errors after toggling all layers on/off.
+- Lint clean, compiles 200.

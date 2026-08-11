@@ -22,7 +22,7 @@ import { SafetyPanel } from "@/components/panels/SafetyPanel";
 import { AboutPanel } from "@/components/panels/AboutPanel";
 import type { EarthquakeEvent } from "@/lib/types";
 import {
-  Plus, Minus, Mountain, Compass, X, Layers as LayersIcon,
+  Plus, Minus, Mountain, Compass, X, Layers as LayersIcon, LocateFixed,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -47,6 +47,8 @@ export default function Home() {
   const stream = useSeismo((s) => s.stream);
   const pushStreamEvent = useSeismo((s) => s.pushStreamEvent);
   const setWsConnected = useSeismo((s) => s.setWsConnected);
+  const userLocation = useSeismo((s) => s.userLocation);
+  const setUserLocation = useSeismo((s) => s.setUserLocation);
 
   const { data: selectedFull, loading: selLoading } = useEarthquake(selected?.id ?? null);
   const { data: recent } = useRecentEarthquakes(120);
@@ -127,9 +129,47 @@ export default function Home() {
     return { lon: selected.longitude, lat: selected.latitude, zoom: 7.5 };
   }, [selected]);
 
-  const trigger = useCallback((action: "reset" | "zoomIn" | "zoomOut") => {
+  const trigger = useCallback((action: "reset" | "zoomIn" | "zoomOut" | "locate") => {
     setCommand({ action, nonce: Date.now() });
   }, []);
+
+  // ---- Locate Me: request geolocation, show user on map, fly camera there ----
+  const handleLocate = useCallback(() => {
+    if (!navigator.geolocation) {
+      toast.error("Location services are not supported by this browser.");
+      return;
+    }
+    // If we already have a location, just fly to it (don't re-request permission)
+    if (userLocation) {
+      trigger("locate");
+      toast.success(`Centered on your location: ${userLocation.name}`);
+      return;
+    }
+    toast.info("Requesting your location…");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude, accuracy } = pos.coords;
+        setUserLocation({
+          name: "My location",
+          latitude,
+          longitude,
+          accuracy,
+        });
+        // Trigger the map to fly to this location
+        setTimeout(() => trigger("locate"), 200);
+        toast.success(`Location found (±${Math.round(accuracy)}m accuracy)`);
+      },
+      (err) => {
+        const messages: Record<number, string> = {
+          1: "Location permission was denied. Enable location access in your browser settings to use this feature.",
+          2: "Your location could not be determined.",
+          3: "Location request timed out. Please try again.",
+        };
+        toast.error(messages[err.code] ?? "Location request failed.");
+      },
+      { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 },
+    );
+  }, [userLocation, setUserLocation, trigger]);
 
   const isMap = MAP_VIEWS.has(view);
   const isOverlay = OVERLAY_VIEWS.has(view);
@@ -152,6 +192,7 @@ export default function Home() {
             latestId={settings.highlightLatest ? latestId : null}
             onSelect={(eq) => select(eq)}
             layers={layers}
+            userLocation={userLocation}
             reducedMotion={settings.reducedMotion}
             dataSaver={settings.dataSaver}
             basemap={settings.basemap}
@@ -202,6 +243,7 @@ export default function Home() {
             <CamBtn label="Zoom in" onClick={() => trigger("zoomIn")}><Plus className="h-4 w-4" /></CamBtn>
             <CamBtn label="Zoom out" onClick={() => trigger("zoomOut")}><Minus className="h-4 w-4" /></CamBtn>
             <CamBtn label="Reset view" onClick={() => trigger("reset")}><Compass className="h-4 w-4" /></CamBtn>
+            <CamBtn label="Locate me" onClick={handleLocate} active={!!userLocation}><LocateFixed className="h-4 w-4" /></CamBtn>
             <CamBtn label="Toggle terrain" active={layers.terrain} onClick={() => toggleLayer("terrain")}><Mountain className="h-4 w-4" /></CamBtn>
           </div>
         )}
