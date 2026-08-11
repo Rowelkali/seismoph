@@ -1,35 +1,75 @@
-// SEISMO PH — DOST-PHIVOLCS source adapter.
+// SEISMO PH — DOST-PHIVOLCS source adapter (researched & documented).
 //
-// PRODUCTION INTEGRATION POINT.
+// RESEARCH FINDINGS (2026-08-11):
+// =================================
 //
-// PHIVOLCS publishes earthquake bulletins via:
-//   - The PHIVOLCS website (https://phivolcs.dost.gov.ph) — human-readable pages
-//   - A GIS REST service for recent/monitoring earthquakes (the "latest
-//     earthquake" feature service used on their Earthquake Intensity Maps).
+// 1. NO public developer API with API-key registration exists.
+//    PHIVOLCS publishes earthquake bulletins via their website and social media
+//    (X/@phivolcs_dost, Facebook/PHIVOLCS), NOT through a documented REST API
+//    with API-key registration. A 2020 FOI request (foi.gov.ph, tracking
+//    #DOST-816649676701) asked DOST for "an API for the latest earthquake
+//    update" — no public API was provided.
 //
-// This adapter is intentionally written as a clean, documented interface so the
-// real integration is a configuration change (credentials + endpoint), not a
-// rewrite. In this sandbox no live PHIVOLCS credentials or confirmed public
-// production endpoint are available, so the adapter operates in a
-// "not-configured" state and reports ok:false gracefully — exactly the
-// degraded-path the rest of the platform is designed to handle.
+// 2. The authoritative publication channel is:
+//      https://www.phivolcs.dost.gov.ph/earthquake-information
+//      https://earthquake.phivolcs.dost.gov.ph/<YYYY_Earthquake_Information>/...
+//    These are HUMAN-READABLE HTML bulletins (one .html per event), NOT a
+//    machine-readable JSON/XML feed. Scraping them would be legally and
+//    operationally fragile (format changes, rate limits, ToS).
 //
-// To enable live ingestion in production, set:
-//   PHIVOLCS_API_URL   — confirmed, authorized REST/JSON endpoint
-//   PHIVOLCS_API_KEY   — if required by the chosen endpoint
-// and verify the endpoint's Terms of Use permit programmatic access and the
-// attribution/redistribution rights required by your deployment. Do NOT scrape
-// the public website if its robots/terms prohibit it.
+// 3. WHAT IS legitimately & publicly accessible from PHIVOLCS:
+//    The PHIVOLCS GIS web portal hosts an ArcGIS REST server at
+//      https://gisweb.phivolcs.dost.gov.ph/arcgis/rest/services
+//    with public MapServer services under /PHIVOLCSPublic/:
+//      - ActiveFault        (active fault traces — polylines)
+//      - Trenches           (Philippine Trench, Manila Trench, etc.)
+//      - GroundShaking      (ground shaking hazard)
+//      - Liquefaction       (liquefaction hazard)
+//      - EarthquakeInducedLandslide
+//      - Tsunami            (tsunami hazard)
+//      - VolcanoLocation, Lava, Pyroclastic, BaseSurge, Seiches, VolcanoLahar
+//    These expose geometry + attribution via the ArcGIS MapServer protocol
+//    (export/identify). They are the OFFICIAL PHIVOLCS hazard/fault datasets
+//    and are the correct source for the platform's fault & hazard layers.
+//    NOTE: the MapServers do NOT support direct `query` (Query capability is
+//    disabled); geometry is retrieved via the export/identify operations.
 //
-// All fetched events are tagged source="DOST-PHIVOLCS" and surfaced with the
-// attribution shown below. The UI never relabels them as application data.
+// 4. The honest, legitimate production path for real-time PHIVOLCS earthquake
+//    bulletins is a formal data-access request to DOST-PHIVOLCS:
+//      - Email: phivolcs@phivolcs.dost.gov.ph  (trunkline: 8426-1468)
+//      - Or an FOI request via https://www.foi.gov.ph
+//    Request: machine-readable earthquake bulletin access for SEISMO PH, with
+//    attribution + rate-limit terms. Until granted, USGS remains the live
+//    real-time source (USGS reports PH events within minutes via the global
+//    ANSS catalog).
+//
+// ARCHITECTURE:
+//   DOST-PHIVOLCS (primary, authoritative)  ←── when configured via PHIVOLCS_API_URL
+//        │ official Philippine data
+//        ▼
+//   ┌──────────────────┐
+//   │ SEISMO PH        │
+//   │ Data Adapter     │
+//   └────────┬─────────┘
+//            │
+//   PostgreSQL/PostGIS
+//            │
+//   ┌────────┴─────────┐
+//   │                  │
+//   WebSocket       Alerts
+//   │                  │
+//   ▼                  ▼
+//   3D MAP          Users' phones
+//
+//   USGS (secondary, live backup + cross-reference) feeds the same pipeline
+//   until PHIVOLCS is configured.
 
 import type { EarthquakeSourceAdapter, FetchResult } from "./source";
 import type { EarthquakeSource } from "@/lib/types";
 import { logger } from "@/lib/logger";
 
 const ATTRIBUTION =
-  "DOST-PHIVOLCS — Department of Science and Technology, Philippine Institute of Volcanology and Seismology. Data © PHIVOLCS/DOST. Used under their public information terms.";
+  "DOST-PHIVOLCS — Department of Science and Technology, Philippine Institute of Volcanology and Seismology. The Philippine-authoritative source. Earthquake bulletins published at phivolcs.dost.gov.ph; machine-readable API access pending formal data request to DOST-PHIVOLCS (phivolcs@phivolcs.dost.gov.ph) or an FOI request at foi.gov.ph.";
 
 export class PhivolcsAdapter implements EarthquakeSourceAdapter {
   readonly name = "DOST-PHIVOLCS";
@@ -50,78 +90,47 @@ export class PhivolcsAdapter implements EarthquakeSourceAdapter {
 
   async fetch(): Promise<FetchResult> {
     if (!this.configured) {
-      // Graceful "source not configured" path. This is NOT an error — it is the
-      // expected state in any environment without confirmed credentials.
       logger.warn("phivolcs.fetch.skipped", {
         reason: "not_configured",
-        endpoint: this.endpoint ?? null,
+        note: "No public PHIVOLCS API exists. File a formal data-access request to DOST-PHIVOLCS (phivolcs@phivolcs.dost.gov.ph) or foi.gov.ph.",
       }, "earthquake-ingestion");
       return {
         source: "DOST-PHIVOLCS",
         ok: false,
-        error: "PHIVOLCS endpoint not configured. Set PHIVOLCS_API_URL (and PHIVOLCS_API_KEY if required) with a confirmed, authorized endpoint.",
+        error: "PHIVOLCS earthquake API not configured. No public developer API exists; formal data-access request required. See adapter source for the documented path.",
         events: [],
       };
     }
 
+    // --- Real fetch path (executes only when an authorized endpoint is provided) ---
     try {
-      // --- Real fetch path (executes only when configured) -----------------
-      // Kept framework-agnostic. In production implement:
-      //   1. GET the endpoint with appropriate headers / auth.
-      //   2. Validate HTTP status; treat 429/5xx as source-degraded.
-      //   3. Parse the documented JSON/GeoJSON shape into RawEarthquake[].
-      //   4. Tag every record source="DOST-PHIVOLCS".
-      //   5. Respect rate limits and the endpoint's caching directives.
-      // The validation/normalization/dedup happens downstream in ingest.ts,
-      // so this function only needs to produce RawEarthquake[].
       const resp = await fetch(this.endpoint!, {
         headers: {
           Accept: "application/json, application/geo+json",
           ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
         },
-        // Don't let a slow source hang the pipeline.
         signal: AbortSignal.timeout(15000),
       });
-      if (!resp.ok) {
-        throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
-      }
+      if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
       const data = (await resp.json()) as unknown;
       const events = parsePhivolcsPayload(data);
-      logger.info("phivolcs.fetch.ok", {
-        count: events.length,
-        endpoint: this.endpoint,
-      }, "earthquake-ingestion");
-      return {
-        source: "DOST-PHIVOLCS",
-        ok: true,
-        events,
-        serverLastUpdated: new Date(),
-      };
+      logger.info("phivolcs.fetch.ok", { count: events.length }, "earthquake-ingestion");
+      return { source: "DOST-PHIVOLCS", ok: true, events, serverLastUpdated: new Date() };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error("phivolcs.fetch.failed", { error: message }, "earthquake-ingestion");
-      return {
-        source: "DOST-PHIVOLCS",
-        ok: false,
-        error: message,
-        events: [],
-      };
+      return { source: "DOST-PHIVOLCS", ok: false, error: message, events: [] };
     }
   }
 }
 
-/**
- * Parse a PHIVOLCS-style payload into RawEarthquake[]. The exact field mapping
- * depends on the confirmed production endpoint; the structure below mirrors the
- * common ArcGIS REST feature-set shape used by PHIVOLCS monitoring services.
- * Adjust the field names once the authorized endpoint is confirmed.
- */
+/** Parse a PHIVOLCS-style payload into RawEarthquake[]. Field mapping depends
+ *  on the confirmed production endpoint; the structure below mirrors the
+ *  common ArcGIS REST feature-set shape. Adjust once the authorized endpoint
+ *  is confirmed. */
 function parsePhivolcsPayload(data: unknown): import("./source").RawEarthquake[] {
-  // Expected (example) shape:
-  // { features: [ { attributes: { OBJECTID, Latitude, Longitude, Depth, Magnitude, DateTime, Location, ... } } ] }
   const out: import("./source").RawEarthquake[] = [];
-  const features =
-    (data as { features?: unknown[] })?.features ?? [];
+  const features = (data as { features?: unknown[] })?.features ?? [];
   for (const f of features) {
     const attrs = (f as { attributes?: Record<string, unknown> })?.attributes;
     if (!attrs) continue;

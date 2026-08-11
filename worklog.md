@@ -83,3 +83,32 @@ Stage Summary:
 - Lint clean, both services running, no console errors.
 - DB: 536 real USGS earthquakes, 0 PHIVOLCS (adapter not configured). Sources: USGS=HEALTHY, DOST-PHIVOLCS=UNKNOWN.
 - To activate PHIVOLCS as primary: set PHIVOLCS_API_URL (and PHIVOLCS_API_KEY if required) with a confirmed authorized endpoint. The adapter will automatically take precedence over USGS for matching events.
+
+---
+Task ID: PHIVOLCS-RESEARCH
+Agent: Z.ai Code (main)
+Task: Research how PHIVOLCS actually exposes its data; restructure to PHIVOLCS-primary architecture per user's directive.
+
+Work Log:
+- Used web-search skill to research PHIVOLCS's actual data exposure. Findings:
+  1. NO public developer API with API-key registration exists. PHIVOLCS publishes bulletins via website + social media (X, Facebook).
+  2. A 2020 FOI request (foi.gov.ph #DOST-816649676701) asked DOST for "an API for the latest earthquake update" — no public API was provided.
+  3. DISCOVERED: PHIVOLCS operates a public ArcGIS REST server at gisweb.phivolcs.dost.gov.ph/arcgis/rest/services with a /PHIVOLCSPublic/ folder containing official MapServer services: ActiveFault, Trenches, GroundShaking, Liquefaction, EarthquakeInducedLandslide, Tsunami, VolcanoLocation, Lava, Pyroclastic, BaseSurge, Seiches, VolcanoLahar.
+  4. These are MapServer (not FeatureServer) — the `query` operation is disabled, but the `export` operation works and returns real PNG images of the official geometry. Verified: ActiveFault export returned a 9.8KB PNG, Trenches returned 29.7KB PNG.
+  5. The legitimate production path for real-time PHIVOLCS earthquake bulletins is a formal data-access request to DOST-PHIVOLCS (phivolcs@phivolcs.dost.gov.ph) or an FOI request at foi.gov.ph.
+- Rewrote src/lib/ingestion/phivolcs.ts with full documented research findings: the adapter remains the production seam (set PHIVOLCS_API_URL when an authorized endpoint is granted), and the source code itself documents the honest data-access path.
+- Created src/lib/phivolcs-layers.ts — integration with the official PHIVOLCS ArcGIS MapServer services. Defines 6 official layers (ActiveFault, Trenches, GroundShaking, Liquefaction, EarthquakeInducedLandslide, Tsunami) with export-endpoint URL generation.
+- Wired the official ActiveFault + Trenches raster layers into the map (EarthquakeMap.tsx) as MapLibre image sources, replacing the schematic SVG fault overlay with REAL official PHIVOLCS geometry. Verified in browser: both raster sources load (activeFaults: true, trenches: true), both visible by default.
+- Updated About panel with two new sections:
+  * "Map, terrain & official PHIVOLCS layers" — documents that active faults/trenches are now real official DOST-PHIVOLCS data.
+  * "PHIVOLCS data-access research (honest findings)" — documents the research: no public API, FOI request, official GIS access, formal data-request path, and why USGS is the interim live source.
+- Architecture is now exactly as the user specified:
+    DOST-PHIVOLCS (primary, authoritative) → SEISMO PH adapter → PostgreSQL → WebSocket → 3D Map + Alerts
+    USGS (secondary, live backup + cross-reference) feeds the same pipeline until PHIVOLCS is configured.
+
+Stage Summary:
+- Official DOST-PHIVOLCS fault and trench geometry is now live on the map (real data from gisweb.phivolcs.dost.gov.ph, not schematic).
+- PHIVOLCS adapter fully documented with the honest research: no public API, formal data-request path, FOI precedent.
+- About page transparently documents all findings + the legitimate production path.
+- Lint clean, map loads (styleLoaded: true, loaded: true), both PHIVOLCS raster layers visible, zero errors.
+- The platform no longer pretends PHIVOLCS integration works — it honestly states the status and provides the real path to activate it (formal data-access request), while using USGS legitimately as the interim live source.

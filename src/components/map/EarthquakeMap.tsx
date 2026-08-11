@@ -6,8 +6,9 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { EarthquakeEvent } from "@/lib/types";
 import { PH_CITIES } from "@/lib/ingestion/seed-data";
 import { FAULTS } from "./faults";
+import { PHIVOLCS_LAYERS, phivolcsRasterSource } from "@/lib/phivolcs-layers";
 import { severityOf, SEVERITY_COLOR } from "@/lib/ui";
-import { PH_CENTER } from "@/lib/geo";
+import { PH_CENTER, PH_BOUNDS } from "@/lib/geo";
 
 interface Props {
   earthquakes: EarthquakeEvent[];
@@ -62,7 +63,7 @@ const DARK_STYLE = {
   ],
 };
 
-const PH_BOUNDS: LngLatBoundsLike = [117.5, 4.5, 127.5, 21.0];
+const PH_FIT_BOUNDS: LngLatBoundsLike = [117.5, 4.5, 127.5, 21.0];
 const MAX_MARKERS = 150;
 
 export function EarthquakeMap({
@@ -134,13 +135,47 @@ export function EarthquakeMap({
         }
       }
 
-      // Note: Faults are rendered as HTML SVG overlays (see faults effect below),
-      // NOT as a GeoJSON layer. GeoJSON sources require the WebGL worker which
+      // --- OFFICIAL PHIVOLCS hazard layers (real data from gisweb.phivolcs.dost.gov.ph) ---
+      // ActiveFault + Trenches are loaded as raster overlays using the ArcGIS
+      // MapServer export endpoint. These are the authoritative PHIVOLCS fault
+      // and trench traces — not schematic. Hidden by default; toggled via the
+      // faults layer switch (which now controls BOTH the schematic SVG overlay
+      // AND these official raster layers).
+      try {
+        const phivolcsBounds: [number, number, number, number] = [PH_BOUNDS.minLon, PH_BOUNDS.minLat, PH_BOUNDS.maxLon, PH_BOUNDS.maxLat];
+        for (const layer of PHIVOLCS_LAYERS.slice(0, 2)) {
+          // Only add active-faults + trenches as map layers (the rest are
+          // hazard overlays that could be added similarly).
+          const tileUrl = phivolcsRasterSource(layer, phivolcsBounds);
+          map.addSource(`phivolcs-${layer.id}`, {
+            type: "image",
+            url: tileUrl,
+            coordinates: [
+              [PH_BOUNDS.minLon, PH_BOUNDS.maxLat], // top-left
+              [PH_BOUNDS.maxLon, PH_BOUNDS.maxLat], // top-right
+              [PH_BOUNDS.maxLon, PH_BOUNDS.minLat], // bottom-right
+              [PH_BOUNDS.minLon, PH_BOUNDS.minLat], // bottom-left
+            ],
+          });
+          map.addLayer({
+            id: `phivolcs-${layer.id}-layer`,
+            type: "raster",
+            source: `phivolcs-${layer.id}`,
+            paint: { "raster-opacity": layer.id === "active-faults" ? 0.85 : 0.7 },
+            layout: { visibility: layers.faults ? "visible" : "none" },
+          });
+        }
+      } catch {
+        /* PHIVOLCS layers optional — degrade to schematic SVG overlay */
+      }
+
+      // Note: Schematic faults are also rendered as HTML SVG overlays below as
+      // a fallback/supplement. GeoJSON sources require the WebGL worker which
       // can be unreliable in some browser environments, keeping styleLoaded=false
       // forever. HTML overlays have no such dependency.
 
       // Initial fit
-      map.fitBounds(PH_BOUNDS, { padding: 28, pitch: 0 });
+      map.fitBounds(PH_FIT_BOUNDS, { padding: 28, pitch: 0 });
     });
 
     return () => {
@@ -337,6 +372,21 @@ export function EarthquakeMap({
     };
   }, [layers.faults]);
 
+  // ---- toggle official PHIVOLCS raster layers (active-faults + trenches) ----
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const apply = () => {
+      for (const layer of PHIVOLCS_LAYERS.slice(0, 2)) {
+        const layerId = `phivolcs-${layer.id}-layer`;
+        if (map.getLayer(layerId)) {
+          map.setLayoutProperty(layerId, "visibility", layers.faults ? "visible" : "none");
+        }
+      }
+    };
+    apply();
+  }, [layers.faults]);
+
   // ---- terrain toggle ----
   useEffect(() => {
     const map = mapRef.current;
@@ -390,7 +440,7 @@ export function EarthquakeMap({
     const map = mapRef.current;
     if (!map || !command) return;
     if (command.action === "reset") {
-      map.fitBounds(PH_BOUNDS, { padding: 28, pitch: 0, bearing: 0, duration: reducedMotion ? 0 : 900 });
+      map.fitBounds(PH_FIT_BOUNDS, { padding: 28, pitch: 0, bearing: 0, duration: reducedMotion ? 0 : 900 });
     } else if (command.action === "zoomIn") {
       map.zoomIn({ duration: 250 });
     } else if (command.action === "zoomOut") {

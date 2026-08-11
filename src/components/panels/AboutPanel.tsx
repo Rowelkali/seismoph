@@ -108,12 +108,29 @@ backup monitoring`}
             </p>
           </Card>
 
-          <Card icon={Map} title="Map & terrain providers">
+          <Card icon={Map} title="Map, terrain & official PHIVOLCS layers">
             <ul className="ml-4 list-disc space-y-1 text-sm">
               <li>Basemap: <strong>CARTO dark matter</strong> (© OpenStreetMap contributors, © CARTO).</li>
               <li>Terrain: <strong>AWS Terrain Tiles</strong> (terrarium encoding) — public DEM tiles.</li>
-              <li>Fault lines shown are schematic representations of major Philippine tectonic structures for visualization, not survey-grade traces. Production deployments should use properly licensed PHIVOLCS active fault datasets with full attribution.</li>
+              <li><strong>Active faults & trenches: official DOST-PHIVOLCS data</strong> from the PHIVOLCS GIS ArcGIS REST server (<code className="font-mono text-[11px]">gisweb.phivolcs.dost.gov.ph/arcgis/rest/services/PHIVOLCSPublic</code>). Real, authoritative fault/trench geometry — not schematic.</li>
+              <li>Available official PHIVOLCS hazard layers (ready to enable): Ground Shaking, Liquefaction, Earthquake-Induced Landslide, Tsunami.</li>
             </ul>
+          </Card>
+
+          <Card icon={Database} title="PHIVOLCS data-access research (honest findings)">
+            <p className="text-sm leading-relaxed">
+              We researched how PHIVOLCS exposes its earthquake data. Here&apos;s the honest status:
+            </p>
+            <ul className="ml-4 mt-2 list-disc space-y-1.5 text-sm">
+              <li><strong>No public developer API with API-key registration exists.</strong> PHIVOLCS publishes earthquake bulletins via their website (<code className="font-mono text-[11px]">phivolcs.dost.gov.ph/earthquake-information</code>) and social media, not a documented REST API.</li>
+              <li>A 2020 FOI request (foi.gov.ph, tracking #DOST-816649676701) asked DOST for &quot;an API for the latest earthquake update&quot; — no public API was provided.</li>
+              <li><strong>Official PHIVOLCS GIS data IS publicly accessible</strong> via the ArcGIS REST server at <code className="font-mono text-[11px]">gisweb.phivolcs.dost.gov.ph</code> — used here for active faults, trenches, and hazard layers.</li>
+              <li><strong>The legitimate production path for real-time PHIVOLCS earthquake bulletins</strong> is a formal data-access request to DOST-PHIVOLCS (<code className="font-mono text-[11px]">phivolcs@phivolcs.dost.gov.ph</code>, trunkline 8426-1468) or an FOI request at <code className="font-mono text-[11px]">foi.gov.ph</code>.</li>
+              <li>Until that access is granted, <strong>USGS</strong> (which reports PH events within minutes via the global ANSS catalog) serves as the live real-time source, with cross-referencing against PHIVOLCS when configured.</li>
+            </ul>
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              We do not scrape the PHIVOLCS website — scraping would be legally and operationally fragile and is not a production-grade approach.
+            </p>
           </Card>
 
           <Card icon={ShieldCheck} title="Engineering & security">
