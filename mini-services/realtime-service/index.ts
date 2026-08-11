@@ -53,15 +53,14 @@ const phivolcsAdapter = new PhivolcsAdapter();
 async function pollPhivolcs() {
   try {
     // Get the set of externalIds already in the DB so we only fetch NEW bulletins.
+    // Fetch ALL existing externalIds (not just 500) to avoid re-ingesting old ones.
     const existing = await db.earthquake.findMany({
       where: { source: "DOST-PHIVOLCS" },
       select: { externalId: true },
-      take: 500,
-      orderBy: { createdAt: "desc" },
     });
     const knownIds = new Set(existing.map((e) => e.externalId));
 
-    const result = await phivolcsAdapter.fetch({ maxEvents: 10, knownIds });
+    const result = await phivolcsAdapter.fetch({ maxEvents: 15, knownIds });
 
     if (!result.ok) {
       logger.warn("rt.poll.phivolcs.failed", { error: result.error }, "realtime-service");
@@ -71,10 +70,25 @@ async function pollPhivolcs() {
       return;
     }
 
+    // Ingest ALL parsed events (including old ones — for catalog completeness).
     const outcome = await ingestBatch(result.events);
 
+    // ONLY emit `earthquake.created` for events with origin_time within the
+    // last 2 hours. Older events are historical bulletins that PHIVOLCS
+    // published late — they should NOT trigger realtime notifications.
+    const REALTIME_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours
+    const now = Date.now();
+    let emittedCount = 0;
+    let suppressedCount = 0;
+
     for (const created of outcome.created) {
-      await emitCreated(created);
+      const originAge = now - new Date(created.originTime).getTime();
+      if (originAge <= REALTIME_WINDOW_MS) {
+        await emitCreated(created);
+        emittedCount++;
+      } else {
+        suppressedCount++;
+      }
     }
     for (const updated of outcome.updated) {
       io.emit("earthquake.updated", mapEarthquake(updated));
@@ -96,6 +110,8 @@ async function pollPhivolcs() {
       logger.info("rt.poll.summary", {
         fetched: result.events.length,
         created: outcome.created.length,
+        emitted: emittedCount,
+        suppressed: suppressedCount,
         updated: outcome.updated.length,
         unchanged: outcome.unchanged,
       }, "realtime-service");

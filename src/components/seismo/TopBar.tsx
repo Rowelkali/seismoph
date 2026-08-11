@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Menu, Search, Bell, Settings, Volume2, VolumeX, Wifi, WifiOff } from "lucide-react";
 import { LeftNav } from "./LeftNav";
 import { cn } from "@/lib/utils";
+import { timeAgoPHT } from "@/lib/ui";
 
 export function TopBar({ wsConnected, onOpenSearch }: { wsConnected: boolean; onOpenSearch: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -57,6 +58,16 @@ export function TopBar({ wsConnected, onOpenSearch }: { wsConnected: boolean; on
         <span className="hidden items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground sm:flex">
           PHIVOLCS:
           <StatusIndicator status={phivolcsState} label={phivolcsState === "live" ? "HEALTHY" : phivolcsState.toUpperCase()} />
+          {phivolcsSource?.lastSuccessAt && phivolcsState === "live" && (
+            <span className="ml-1 text-[9px] text-muted-foreground/70">
+              · {timeAgoPHT(phivolcsSource.lastSuccessAt)}
+            </span>
+          )}
+          {phivolcsState !== "live" && phivolcsSource?.lastSuccessAt && (
+            <span className="ml-1 text-[9px] text-amber-400/80">
+              · last update {timeAgoPHT(phivolcsSource.lastSuccessAt)}
+            </span>
+          )}
         </span>
       </div>
 

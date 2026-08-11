@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { useSeismo } from "@/lib/store";
 import { useRealtime, useEarthquake, useRecentEarthquakes } from "@/hooks/use-seismo-data";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAlertSound } from "@/hooks/use-alert-sound";
 import { TopBar } from "@/components/seismo/TopBar";
 import { DevDataBanner } from "@/components/seismo/DevDataBanner";
@@ -49,6 +50,7 @@ export default function Home() {
   const { data: selectedFull, loading: selLoading } = useEarthquake(selected?.id ?? null);
   const { data: recent } = useRecentEarthquakes(120);
   const { trigger: triggerSound } = useAlertSound();
+  const queryClient = useQueryClient();
 
   const [command, setCommand] = useState<{ action: "reset" | "zoomIn" | "zoomOut"; nonce: number } | null>(null);
   const [layerOpen, setLayerOpen] = useState(false);
@@ -72,10 +74,15 @@ export default function Home() {
   }, [recent, stream]);
 
   // WebSocket realtime — genuinely new events from the PHIVOLCS 60s poll trigger
-  // the pop animation, alert sound, and toast notification.
+  // the pop animation, alert sound, toast notification, AND React Query cache
+  // invalidation so the sidebar "Recent Earthquakes" list updates immediately.
   const { connected } = useRealtime({
     onCreated: (eq) => {
       pushStreamEvent(eq);
+      // Invalidate ALL earthquake + statistics queries so the sidebar list,
+      // map dataset, and analytics dashboard refetch with the new data.
+      void queryClient.invalidateQueries({ queryKey: ["earthquakes"] });
+      void queryClient.invalidateQueries({ queryKey: ["statistics"] });
       // Alert sound + toast for new events.
       if (eq.magnitude >= 4.0) {
         triggerSound(eq.magnitude >= 6 ? "major" : "minor");

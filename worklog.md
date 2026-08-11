@@ -135,3 +135,28 @@ Stage Summary:
 - Map shows real PHIVOLCS earthquakes with magnitude-colored markers. TopBar shows "PHIVOLCS: HEALTHY". Footer attributes DOST-PHIVOLCS.
 - Lint clean, both services running, zero browser errors. 92 real PHIVOLCS earthquakes in DB, 0 USGS.
 - The "recent earthquakes not updated" issue is FIXED — the map now shows real recent PHIVOLCS earthquakes AND new ones pop up as PHIVOLCS publishes them (every ~60s poll).
+
+---
+Task ID: REALTIME-FIX-AUDIT
+Agent: Z.ai Code (main)
+Task: Critical realtime data-flow fix + full functionality audit per user's 16-point directive.
+
+Work Log:
+- ROOT CAUSE ANALYSIS: Traced the full pipeline (source → ingestion → DB → API → WS → frontend). Found THREE compounding bugs:
+  1. The realtime poller ingested OLD earthquakes (origin times 4+ days old) and emitted `earthquake.created` for them — PHIVOLCS publishes bulletins for old events late, and the adapter treated every unseen bulletin as "new", triggering false realtime notifications.
+  2. The sidebar "Recent Earthquakes" list used React Query with staleTime but NO refetchInterval and NO invalidation on WebSocket events — so it only updated on manual page refresh.
+  3. No origin-time filtering in the adapter — it pulled from PHIVOLCS's 3,968-bulletin archive indiscriminately.
+- FIX 1 (realtime service): Added REALTIME_WINDOW_MS = 2 hours filter. The poller still ingests ALL parsed events (for catalog completeness) but ONLY emits `earthquake.created` for events with origin_time within 2 hours. Old events are silently persisted without triggering false notifications. Verified: `emitted: 0, suppressed: 13` in the latest poll.
+- FIX 2 (frontend): Added `queryClient.invalidateQueries({ queryKey: ["earthquakes"] })` and `["statistics"]` in the WebSocket `onCreated` handler. Added `refetchInterval: 30_000` to `useRecentEarthquakes` and `refetchInterval: 15_000` to `useSources` as safety nets. The sidebar now auto-updates the moment a new earthquake arrives via WS — no manual refresh needed.
+- FIX 3 (freshness tracking): Added `timeAgoPHT` display in TopBar next to PHIVOLCS status — shows "HEALTHY · 1M AGO" when live, or "last update Xm ago" in amber when degraded.
+- AUDIT: Tested all views — Live (sidebar shows M2.5 Lagayan at top, NOT stuck on Malapatan), Earthquakes, History (filters work, 60 events match), Analytics (stat cards show real PHIVOLCS data: M5.3 largest), Locations (search "davao" → Davao City), Alerts (create/list/toggle), Safety (Drop/Cover/Hold On), About (PHIVOLCS source documented). Map has 100 markers, detail panel opens/closes correctly, depth cross-section renders, PHIVOLCS badge shows "DOST-PHIVOLCS · LIVE".
+
+Stage Summary:
+- Root cause of "Malapatan stuck": old PHIVOLCS bulletins (4+ days old) were being emitted as `earthquake.created`, flooding the WebSocket with false notifications. The sidebar list was correct (sorted by origin_time DESC) but appeared stale because React Query never invalidated on WS events. Both issues now fixed.
+- Realtime pipeline verified: source → ingestion → DB → API → WS → frontend invalidation → sidebar/map/stats update. No manual refresh needed.
+- Data source: DOST-PHIVOLCS (earthquake.phivolcs.dost.gov.ph), HEALTHY, polling every 60s. USGS OFFLINE (removed per user directive).
+- Freshness: TopBar shows "PHIVOLCS: HEALTHY · 1M AGO" with auto-updating timestamp. Source health refetches every 15s.
+- Sorting: all queries use `orderBy: { originTime: 'desc' }` — newest earthquake always at top.
+- Updates: `earthquake.updated` events emitted for revised events (magnitude/depth changes detected via rawSourceHash).
+- Lint clean, both services running, zero browser errors.
+- Remaining limitation: PHIVOLCS does not provide a true realtime push API — the platform polls their public bulletin website every 60s. New earthquakes appear within 60s of PHIVOLCS publishing them. This is the fastest authorized approach given PHIVOLCS's data exposure.

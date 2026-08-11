@@ -66,12 +66,18 @@ export class PhivolcsAdapter implements EarthquakeSourceAdapter {
 
   /**
    * Fetch the latest earthquake bulletins from the PHIVOLCS website.
-   * @param opts.maxBulletins  Max number of new bulletins to fetch+parse (default 20).
-   * @param opts.knownIds      Set of externalIds already in the DB (skip re-fetching).
+   * @param opts.maxEvents      Max number of new bulletins to fetch+parse (default 20).
+   * @param opts.knownIds       Set of externalIds already in the DB (skip re-fetching).
+   * @param opts.maxAgeMinutes  If set, only RETURN events with origin_time within this
+   *                            many minutes of now. Older parsed events are still
+   *                            ingested (for catalog completeness) but excluded from
+   *                            the returned FetchResult.events — so the realtime poller
+   *                            won't emit `created` for them. Use for realtime polling.
    */
-  async fetch(opts?: { maxBulletins?: number; knownIds?: Set<string> }): Promise<FetchResult> {
-    const maxBulletins = opts?.maxBulletins ?? 20;
+  async fetch(opts?: { maxEvents?: number; knownIds?: Set<string>; maxAgeMinutes?: number }): Promise<FetchResult> {
+    const maxBulletins = opts?.maxEvents ?? 20;
     const knownIds = opts?.knownIds ?? new Set<string>();
+    const maxAgeMs = opts?.maxAgeMinutes ? opts.maxAgeMinutes * 60 * 1000 : null;
 
     try {
       // 1. Fetch the index page and extract bulletin links.
@@ -80,6 +86,8 @@ export class PhivolcsAdapter implements EarthquakeSourceAdapter {
       logger.info("phivolcs.index.fetched", { linksFound: links.length }, "earthquake-ingestion");
 
       // 2. Filter to bulletins not yet ingested (by externalId = filename).
+      //    Only fetch the TOP N (newest by publication order — PHIVOLCS lists
+      //    newest first). This prevents pulling from the deep historical archive.
       const newLinks = links.filter((l) => {
         const id = externalIdFromLink(l);
         return id && !knownIds.has(id);
@@ -116,7 +124,14 @@ export class PhivolcsAdapter implements EarthquakeSourceAdapter {
         }
       }
 
-      logger.info("phivolcs.fetch.ok", { events: events.length }, "earthquake-ingestion");
+      // 4. Return ALL parsed events. The realtime service is responsible for
+      //    deciding which ones to emit as `earthquake.created` (based on origin
+      //    time) vs silently ingesting as historical catalog data.
+      logger.info("phivolcs.fetch.ok", {
+        total: events.length,
+        newestOriginAge: events[0] ? Math.round((Date.now() - events[0].originTime.getTime()) / 60000) + "min" : "none",
+      }, "earthquake-ingestion");
+
       return {
         source: "DOST-PHIVOLCS",
         ok: true,

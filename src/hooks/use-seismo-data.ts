@@ -54,7 +54,8 @@ interface SingleResponse<T> {
   data: T;
 }
 
-/** Recent earthquakes (live view + map default). */
+/** Recent earthquakes (live view + map default). Auto-refetches every 30s
+ *  AND when the WebSocket receives a new earthquake event (via invalidation). */
 export function useRecentEarthquakes(limit = 100, includeIntensities = false) {
   const query = useQuery({
     queryKey: ["earthquakes", "recent", limit, includeIntensities],
@@ -64,6 +65,7 @@ export function useRecentEarthquakes(limit = 100, includeIntensities = false) {
       );
       return r;
     },
+    refetchInterval: 30_000, // auto-refetch every 30s as a safety net
   });
   const queryClient = useQueryClient();
   const reload = useCallback(() => {
@@ -179,7 +181,7 @@ export function useStatistics(window: "today" | "7d" | "30d" = "7d") {
   };
 }
 
-/** Data source health. */
+/** Data source health. Auto-refetches every 15s for freshness tracking. */
 export function useSources() {
   const q = useQuery({
     queryKey: ["sources"],
@@ -187,7 +189,7 @@ export function useSources() {
       const r = await apiGet<{ data: DataSourceStatus[]; totalEvents: number }>("/api/sources");
       return r;
     },
-    staleTime: 15_000,
+    refetchInterval: 15_000, // auto-refetch every 15s for LIVE/DELAYED/UNAVAILABLE status
   });
   return { data: q.data?.data ?? [], total: q.data?.totalEvents ?? 0 };
 }
