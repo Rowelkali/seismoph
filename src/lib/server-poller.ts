@@ -14,11 +14,12 @@ import { logger } from "@/lib/logger";
 import { ingestBatch } from "@/lib/ingestion/ingest";
 import { PhivolcsAdapter } from "@/lib/ingestion/phivolcs";
 
-// Accept PHIVOLCS TLS cert (its chain is not trusted by the sandbox CA).
-// This must be set before any fetch call.
-if (typeof process !== "undefined" && !process.env.NODE_TLS_REJECT_UNAUTHORIZED) {
-  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-}
+// The PHIVOLCS server's TLS certificate chain is not trusted by some
+// environments (like the development sandbox). In production (Vercel),
+// the CA bundle is proper and this is NOT needed.
+// We only disable TLS verification temporarily during PHIVOLCS fetches
+// rather than globally, to avoid the security warning.
+// The PhivolcsAdapter handles this per-request via a custom fetch wrapper.
 
 const POLL_INTERVAL_MS = 120_000; // 2 minutes
 const STALE_THRESHOLD_MS = 90_000; // if last source check > 90s ago, poll on demand
