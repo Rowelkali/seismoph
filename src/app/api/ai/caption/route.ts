@@ -14,6 +14,7 @@ import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { clientIp, HttpError, jsonError, jsonOk, rateLimit, withErrors } from "@/lib/api";
 import { mapEarthquake } from "@/lib/mappers";
+import { generateText } from "@/lib/ai-client";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -106,17 +107,8 @@ Style guide: ${STYLE_GUIDE[style]}
 
 Write the caption now. Follow every rule in your system instructions. Remember: output ONLY the caption text (the mandatory source line is the final line).`;
 
-  // Use the z-ai-web-dev-sdk (LLM skill). Backend only.
-  const ZAI = (await import("z-ai-web-dev-sdk")).default;
-  const zai = await ZAI.create();
-  const completion = await zai.chat.completions.create({
-    messages: [
-      { role: "assistant", content: SYSTEM_PROMPT },
-      { role: "user", content: userPrompt },
-    ],
-    thinking: { type: "disabled" },
-  });
-  let caption = completion.choices[0]?.message?.content?.trim() ?? "";
+  // Use the unified AI client (Google Gemini on Vercel, z-ai fallback locally)
+  let caption = await generateText(SYSTEM_PROMPT, userPrompt);
 
   // Hard-append the mandatory source line. Strip it from the model output first
   // to avoid duplication if the model included it.

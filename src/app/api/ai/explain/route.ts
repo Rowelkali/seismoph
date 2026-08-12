@@ -15,6 +15,7 @@ import { db } from "@/lib/db";
 import { clientIp, HttpError, jsonError, jsonOk, rateLimit, withErrors } from "@/lib/api";
 import { haversineKm, bearingDeg, bearingLabel } from "@/lib/geo";
 import { mapEarthquake } from "@/lib/mappers";
+import { generateText } from "@/lib/ai-client";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -113,17 +114,8 @@ User question: ${userQuestion}
 
 Explain using ONLY the data above. Follow all rules in your system instructions.`;
 
-  // Use the z-ai-web-dev-sdk (LLM skill). Backend only.
-  const ZAI = (await import("z-ai-web-dev-sdk")).default;
-  const zai = await ZAI.create();
-  const completion = await zai.chat.completions.create({
-    messages: [
-      { role: "assistant", content: SYSTEM_PROMPT },
-      { role: "user", content: userPrompt },
-    ],
-    thinking: { type: "disabled" },
-  });
-  const explanation = completion.choices[0]?.message?.content?.trim() ?? "";
+  // Use the unified AI client (Google Gemini on Vercel, z-ai fallback locally)
+  const explanation = await generateText(SYSTEM_PROMPT, userPrompt);
 
   return jsonOk({
     data: {
