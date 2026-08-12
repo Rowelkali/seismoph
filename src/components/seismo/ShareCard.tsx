@@ -168,19 +168,21 @@ function wrapText(
 }
 
 /** Load a real geographic map by fetching CARTO dark tiles and compositing
- *  them into a single canvas image. Returns an HTMLImageElement or null. */
+ *  them into a single canvas image. Returns an HTMLImageElement or null.
+ *  Uses crossOrigin="anonymous" to avoid canvas tainting (CARTO supports CORS). */
 async function loadStaticMap(eq: EarthquakeEvent, mapW: number, mapH: number): Promise<HTMLImageElement | null> {
   try {
     // Calculate appropriate zoom based on magnitude
     const zoom = eq.magnitude >= 6.5 ? 5 : eq.magnitude >= 5.5 ? 6 : eq.magnitude >= 4.5 ? 7 : eq.magnitude >= 3.5 ? 8 : 9;
     const tileSize = 256;
-    const tilesX = Math.ceil(mapW / tileSize) + 1;
-    const tilesY = Math.ceil(mapH / tileSize) + 1;
+    const tilesX = Math.ceil(mapW / tileSize) + 2;
+    const tilesY = Math.ceil(mapH / tileSize) + 2;
 
     // Convert lat/lon to tile coordinates
     const n = Math.pow(2, zoom);
+    const latRad = (eq.latitude * Math.PI) / 180;
     const centerTileX = ((eq.longitude + 180) / 360) * n;
-    const centerTileY = ((1 - Math.log(Math.tan((eq.latitude * Math.PI) / 180) + 1 / Math.cos((eq.latitude * Math.PI) / 180)) / Math.PI) / 2) * n;
+    const centerTileY = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n;
 
     const startTileX = Math.floor(centerTileX - tilesX / 2);
     const startTileY = Math.floor(centerTileY - tilesY / 2);
@@ -200,34 +202,48 @@ async function loadStaticMap(eq: EarthquakeEvent, mapW: number, mapH: number): P
     ctx.fillStyle = "#0c0f14";
     ctx.fillRect(0, 0, mapW, mapH);
 
-    // Fetch and draw tiles
-    const tilePromises: Promise<void>[] = [];
+    // Fetch and draw tiles — use crossOrigin to prevent canvas tainting
+    const tilePromises: Promise<boolean>[] = [];
     for (let ty = 0; ty < tilesY; ty++) {
       for (let tx = 0; tx < tilesX; tx++) {
-        const tileX = (startTileX + tx + n) % n;
+        const tileX = ((startTileX + tx) % n + n) % n;
         const tileY = Math.max(0, Math.min(n - 1, startTileY + ty));
         const subdomain = ["a", "b", "c", "d"][(tx + ty) % 4];
         const url = `https://${subdomain}.basemaps.cartocdn.com/dark_all/${zoom}/${Math.floor(tileX)}/${tileY}.png`;
 
-        const drawX = tx * tileSize - pixelOffsetX;
-        const drawY = ty * tileSize - pixelOffsetY;
+        const drawX = Math.round(tx * tileSize - pixelOffsetX);
+        const drawY = Math.round(ty * tileSize - pixelOffsetY);
 
         tilePromises.push(
-          new Promise<void>((resolve) => {
+          new Promise<boolean>((resolve) => {
             const img = new Image();
             img.crossOrigin = "anonymous";
             img.onload = () => {
-              ctx.drawImage(img, drawX, drawY);
-              resolve();
+              try {
+                ctx.drawImage(img, drawX, drawY);
+              } catch {
+                // drawing might fail if canvas is tainted — ignore
+              }
+              resolve(true);
             };
-            img.onerror = () => resolve(); // skip failed tiles
+            img.onerror = () => resolve(false);
+            // Set a timeout — if the tile doesn't load in 5s, skip it
+            setTimeout(() => resolve(false), 5000);
             img.src = url;
           }),
         );
       }
     }
 
-    await Promise.all(tilePromises);
+    const results = await Promise.all(tilePromises);
+    const successCount = results.filter(Boolean).length;
+    console.log(`[ShareCard] Map tiles: ${successCount}/${results.length} loaded`);
+
+    // If less than 30% of tiles loaded, the map is unusable — return null to trigger fallback
+    if (successCount < results.length * 0.3) {
+      console.warn("[ShareCard] Too few map tiles loaded, using polygon fallback");
+      return null;
+    }
 
     // Convert composite canvas to an image
     const dataUrl = compositeCanvas.toDataURL("image/png");
@@ -237,7 +253,8 @@ async function loadStaticMap(eq: EarthquakeEvent, mapW: number, mapH: number): P
       img.onerror = () => resolve(null);
       img.src = dataUrl;
     });
-  } catch {
+  } catch (e) {
+    console.error("[ShareCard] loadStaticMap failed:", String(e).slice(0, 100));
     return null;
   }
 }
