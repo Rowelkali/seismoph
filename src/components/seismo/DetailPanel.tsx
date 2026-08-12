@@ -13,7 +13,6 @@ import { haversineKm, bearingDeg, bearingLabel, depthClass } from "@/lib/geo";
 import type { EarthquakeEvent, IntensityReport } from "@/lib/types";
 import { useSeismo } from "@/lib/store";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   X, MapPin, Clock, Layers3, Crosshair, Share2, Copy, Radio,
   Activity, Navigation, AlertCircle,
@@ -76,9 +75,9 @@ export function DetailPanel({ earthquake, loading, onClose, className }: Props) 
   const viewOnMap = () => setView("live");
 
   return (
-    <div className={cn("glass-strong rounded-lg flex flex-col overflow-hidden", className)}>
-      {/* header */}
-      <div className="flex items-start gap-3 border-b border-border p-3">
+    <div className={cn("glass-strong rounded-lg flex flex-col overflow-hidden h-full max-h-full", className)}>
+      {/* header — fixed, does not scroll */}
+      <div className="flex shrink-0 items-start gap-3 border-b border-border p-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <MagnitudeBadge magnitude={eq.magnitude} magnitudeType={eq.magnitudeType} size="lg" />
@@ -121,7 +120,9 @@ export function DetailPanel({ earthquake, loading, onClose, className }: Props) 
         )}
       </div>
 
-      <ScrollArea className="flex-1 scroll-slim">
+      {/* Scrollable content area — uses native overflow for reliable scrolling
+          in nested flex containers (Radix ScrollArea can fail here) */}
+      <div className="flex-1 overflow-y-auto scroll-slim min-h-0">
         <div className="space-y-4 p-3">
           {/* key facts */}
           <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
@@ -192,10 +193,10 @@ export function DetailPanel({ earthquake, loading, onClose, className }: Props) 
           <ShareCard earthquake={eq} />
           <AiCaption earthquake={eq} />
         </div>
-      </ScrollArea>
+      </div>
 
-      {/* footer actions */}
-      <div className="grid grid-cols-2 gap-1.5 border-t border-border p-2">
+      {/* footer actions — fixed at bottom, does not scroll */}
+      <div className="grid shrink-0 grid-cols-2 gap-1.5 border-t border-border p-2">
         <Button size="sm" variant="outline" onClick={viewOnMap}><MapPin className="h-3.5 w-3.5" /> View on map</Button>
         <Button size="sm" variant="outline" onClick={copyCoords}><Copy className="h-3.5 w-3.5" /> Copy coords</Button>
         <Button size="sm" variant="outline" onClick={share}><Share2 className="h-3.5 w-3.5" /> Share</Button>

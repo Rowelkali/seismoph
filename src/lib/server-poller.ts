@@ -75,10 +75,12 @@ export async function pollPhivolcs(): Promise<{ created: number; emitted: number
 
     if (!result.ok) {
       logger.warn("poll.phivolcs.failed", { error: result.error }, "server-poller");
+      // Use upsert to avoid crash if DataSource record doesn't exist
       await db.dataSource
-        .update({
+        .upsert({
           where: { name: "DOST-PHIVOLCS" },
-          data: { status: "DEGRADED", lastFailureAt: new Date() },
+          update: { status: "DEGRADED", lastFailureAt: new Date() },
+          create: { name: "DOST-PHIVOLCS", status: "DEGRADED", lastFailureAt: new Date(), attribution: "DOST-PHIVOLCS" },
         })
         .catch(() => undefined);
       return { created: 0, emitted: 0 };
@@ -97,13 +99,20 @@ export async function pollPhivolcs(): Promise<{ created: number; emitted: number
       }
     }
 
-    // Mark source healthy
+    // Mark source healthy (upsert to handle missing record gracefully)
     await db.dataSource
-      .update({
+      .upsert({
         where: { name: "DOST-PHIVOLCS" },
-        data: {
+        update: {
           status: "HEALTHY",
           lastSuccessAt: new Date(),
+          lastEventExternalId: outcome.created[outcome.created.length - 1]?.externalId ?? undefined,
+        },
+        create: {
+          name: "DOST-PHIVOLCS",
+          status: "HEALTHY",
+          lastSuccessAt: new Date(),
+          attribution: "DOST-PHIVOLCS — earthquake.phivolcs.dost.gov.ph",
           lastEventExternalId: outcome.created[outcome.created.length - 1]?.externalId ?? undefined,
         },
       })

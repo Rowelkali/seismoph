@@ -291,11 +291,11 @@ export default function Home() {
         {/* Mobile detail bottom sheet — only when selected */}
         {isMap && hasSelection && (
           <div className="absolute inset-x-0 bottom-0 z-30 md:hidden">
-            <div className="glass-strong max-h-[70vh] overflow-y-auto scroll-slim rounded-t-xl border-t border-border">
-              <div className="flex justify-center pt-1.5">
+            <div className="glass-strong max-h-[75vh] rounded-t-xl border-t border-border overflow-hidden flex flex-col">
+              <div className="flex justify-center pt-1.5 shrink-0">
                 <span className="h-1 w-10 rounded-full bg-muted-foreground/40" />
               </div>
-              <DetailPanel earthquake={selectedFull ?? selected} loading={selLoading} onClose={() => select(null)} />
+              <DetailPanel earthquake={selectedFull ?? selected} loading={selLoading} onClose={() => select(null)} className="flex-1 min-h-0" />
             </div>
           </div>
         )}
