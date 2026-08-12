@@ -11,6 +11,7 @@ import { DevDataBanner } from "@/components/seismo/DevDataBanner";
 import { BasemapSelector } from "@/components/seismo/BasemapSelector";
 import { EmergencyMode } from "@/components/seismo/EmergencyMode";
 import { ReplayBar } from "@/components/seismo/ReplayBar";
+import { Globe3DView } from "@/components/seismo/Globe3DView";
 import { LeftNav, MobileNav } from "@/components/seismo/LeftNav";
 import { LayerControl } from "@/components/seismo/LayerControl";
 import { EventStream } from "@/components/seismo/EventStream";
@@ -254,22 +255,32 @@ export default function Home() {
       {!isOverlay && <DevDataBanner />}
 
       <main className="relative flex min-h-0 flex-1">
-        {/* Map (always mounted to preserve state; hidden under overlays) */}
+        {/* Map: 3D Globe OR MapLibre 2D — toggled by basemap style selector */}
         <div className={cn("absolute inset-0", isOverlay && "hidden")}>
-          <EarthquakeMap
-            earthquakes={mapEarthquakes}
-            selectedId={selected?.id}
-            latestId={settings.highlightLatest ? latestId : null}
-            onSelect={(eq) => select(eq)}
-            layers={layers}
-            userLocation={userLocation}
-            reducedMotion={settings.reducedMotion}
-            dataSaver={settings.dataSaver}
-            basemap={settings.basemap}
-            flyTo={flyTo}
-            command={command}
-            className="absolute inset-0 h-full w-full"
-          />
+          {settings.basemap === "globe3d" ? (
+            <Globe3DView
+              earthquakes={mapEarthquakes}
+              selectedId={selected?.id}
+              latestId={settings.highlightLatest ? latestId : null}
+              onSelect={(eq) => select(eq)}
+              className="absolute inset-0 h-full w-full"
+            />
+          ) : (
+            <EarthquakeMap
+              earthquakes={mapEarthquakes}
+              selectedId={selected?.id}
+              latestId={settings.highlightLatest ? latestId : null}
+              onSelect={(eq) => select(eq)}
+              layers={layers}
+              userLocation={userLocation}
+              reducedMotion={settings.reducedMotion}
+              dataSaver={settings.dataSaver}
+              basemap={settings.basemap}
+              flyTo={flyTo}
+              command={command}
+              className="absolute inset-0 h-full w-full"
+            />
+          )}
         </div>
 
         {/* Left floating panel (desktop) */}

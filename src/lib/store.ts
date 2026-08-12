@@ -50,7 +50,7 @@ export interface AppSettings {
   showDevBanner: boolean;
   soundEnabled: boolean;
   soundVolume: number; // 0.0–1.0, user-adjustable master volume multiplier
-  basemap: "dark" | "light" | "satellite" | "topo";
+  basemap: "dark" | "light" | "satellite" | "topo" | "globe3d";
   highlightLatest: boolean;
   units: "metric";
 }

@@ -3,13 +3,14 @@
 import { cn } from "@/lib/utils";
 import { useSeismo } from "@/lib/store";
 import type { BasemapId } from "@/components/map/EarthquakeMap";
-import { Map as MapIcon, Moon, Sun, Mountain, Satellite } from "lucide-react";
+import { Map as MapIcon, Moon, Sun, Mountain, Satellite, Globe } from "lucide-react";
 
 const OPTIONS: { id: BasemapId; label: string; icon: React.ElementType; description: string }[] = [
   { id: "dark", label: "Dark", icon: Moon, description: "CARTO dark matter" },
   { id: "light", label: "Light", icon: Sun, description: "CARTO positron" },
   { id: "satellite", label: "Satellite", icon: Satellite, description: "Esri World Imagery" },
   { id: "topo", label: "Topo", icon: Mountain, description: "OpenTopoMap terrain" },
+  { id: "globe3d", label: "3D Globe", icon: Globe, description: "3D interactive globe with underground hypocenter visualization" },
 ];
 
 /** Compact basemap style selector — appears as a small row of buttons. */
