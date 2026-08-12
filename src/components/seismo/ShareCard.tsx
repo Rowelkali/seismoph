@@ -167,22 +167,75 @@ function wrapText(
   return lines;
 }
 
-/** Load a static map image from CARTO's static map API for the earthquake location.
- *  Returns an HTMLImageElement or null if loading fails. */
+/** Load a real geographic map by fetching CARTO dark tiles and compositing
+ *  them into a single canvas image. Returns an HTMLImageElement or null. */
 async function loadStaticMap(eq: EarthquakeEvent, mapW: number, mapH: number): Promise<HTMLImageElement | null> {
   try {
-    // Calculate appropriate zoom based on magnitude (bigger = wider context)
-    const zoom = eq.magnitude >= 6 ? 6 : eq.magnitude >= 4 ? 7 : 8;
-    // Use CARTO static maps API (free, no key needed for dark theme)
-    const url = `https://staticmap.openstreetmap.de/staticmap.php?center=${eq.latitude},${eq.longitude}&zoom=${zoom}&size=${mapW}x${mapH}&maptype=mapnik`;
+    // Calculate appropriate zoom based on magnitude
+    const zoom = eq.magnitude >= 6.5 ? 5 : eq.magnitude >= 5.5 ? 6 : eq.magnitude >= 4.5 ? 7 : eq.magnitude >= 3.5 ? 8 : 9;
+    const tileSize = 256;
+    const tilesX = Math.ceil(mapW / tileSize) + 1;
+    const tilesY = Math.ceil(mapH / tileSize) + 1;
+
+    // Convert lat/lon to tile coordinates
+    const n = Math.pow(2, zoom);
+    const centerTileX = ((eq.longitude + 180) / 360) * n;
+    const centerTileY = ((1 - Math.log(Math.tan((eq.latitude * Math.PI) / 180) + 1 / Math.cos((eq.latitude * Math.PI) / 180)) / Math.PI) / 2) * n;
+
+    const startTileX = Math.floor(centerTileX - tilesX / 2);
+    const startTileY = Math.floor(centerTileY - tilesY / 2);
+
+    // Calculate pixel offset to center the earthquake
+    const pixelOffsetX = (centerTileX - startTileX) * tileSize - mapW / 2;
+    const pixelOffsetY = (centerTileY - startTileY) * tileSize - mapH / 2;
+
+    // Create a canvas to composite tiles
+    const compositeCanvas = document.createElement("canvas");
+    compositeCanvas.width = mapW;
+    compositeCanvas.height = mapH;
+    const ctx = compositeCanvas.getContext("2d");
+    if (!ctx) return null;
+
+    // Fill with dark background
+    ctx.fillStyle = "#0c0f14";
+    ctx.fillRect(0, 0, mapW, mapH);
+
+    // Fetch and draw tiles
+    const tilePromises: Promise<void>[] = [];
+    for (let ty = 0; ty < tilesY; ty++) {
+      for (let tx = 0; tx < tilesX; tx++) {
+        const tileX = (startTileX + tx + n) % n;
+        const tileY = Math.max(0, Math.min(n - 1, startTileY + ty));
+        const subdomain = ["a", "b", "c", "d"][(tx + ty) % 4];
+        const url = `https://${subdomain}.basemaps.cartocdn.com/dark_all/${zoom}/${Math.floor(tileX)}/${tileY}.png`;
+
+        const drawX = tx * tileSize - pixelOffsetX;
+        const drawY = ty * tileSize - pixelOffsetY;
+
+        tilePromises.push(
+          new Promise<void>((resolve) => {
+            const img = new Image();
+            img.crossOrigin = "anonymous";
+            img.onload = () => {
+              ctx.drawImage(img, drawX, drawY);
+              resolve();
+            };
+            img.onerror = () => resolve(); // skip failed tiles
+            img.src = url;
+          }),
+        );
+      }
+    }
+
+    await Promise.all(tilePromises);
+
+    // Convert composite canvas to an image
+    const dataUrl = compositeCanvas.toDataURL("image/png");
     return new Promise((resolve) => {
       const img = new Image();
-      img.crossOrigin = "anonymous";
       img.onload = () => resolve(img);
       img.onerror = () => resolve(null);
-      img.src = url;
-      // Timeout after 8s
-      setTimeout(() => resolve(null), 8000);
+      img.src = dataUrl;
     });
   } catch {
     return null;
@@ -419,20 +472,20 @@ async function drawShareCard(
   const gridRows = Math.ceil(facts.length / cols);
   const gridBottom = gridTop + gridRows * (cellH + gapPx);
 
-  // ----- 6. Map (Philippines + epicenter) -----
-  // For landscape the map is placed to the right; for tall formats below.
+  // ----- 6. Map (real geographic map + epicenter) -----
+  // Map is now one of the primary visual elements — larger than before.
   let mapX: number, mapY: number, mapW: number, mapH: number;
   if (isLandscape) {
-    // Map on right, half width
-    const mapRightW = Math.round(W * 0.42);
+    // Map on right, larger width
+    const mapRightW = Math.round(W * 0.48);
     mapW = mapRightW - PAD;
-    mapH = Math.round(H * 0.55);
+    mapH = Math.round(H * 0.65);
     mapX = W - PAD - mapW;
     mapY = gridTop;
   } else {
     mapW = W - PAD * 2;
-    // Available height between gridBottom and footer
-    mapH = Math.min(Math.round(W * 0.55), H - gridBottom - Math.round(W * 0.16));
+    // Map is now larger — takes up more of the card height
+    mapH = Math.min(Math.round(W * 0.65), H - gridBottom - Math.round(W * 0.14));
     mapX = PAD;
     mapY = gridBottom + Math.round(W * 0.025);
   }
@@ -570,6 +623,52 @@ async function drawShareCard(
   if (lblX + ctx.measureText(lblText).width > plotX + plotW) lblX = ep.x - 22 - ctx.measureText(lblText).width;
   if (lblY < plotY + 4) lblY = ep.y + 22;
   ctx.fillText(lblText, lblX, lblY);
+
+  // ----- Scale bar (bottom-left of map) -----
+  const scaleZoom = eq.magnitude >= 6.5 ? 5 : eq.magnitude >= 5.5 ? 6 : eq.magnitude >= 4.5 ? 7 : eq.magnitude >= 3.5 ? 8 : 9;
+  // Calculate km per pixel at this zoom at the earthquake's latitude
+  const earthCircumference = 40075; // km
+  const kmPerPixel = (earthCircumference * Math.cos((eq.latitude * Math.PI) / 180)) / (256 * Math.pow(2, scaleZoom));
+  const scaleBarKm = kmPerPixel * 100 > 50 ? 50 : kmPerPixel * 100 > 10 ? 10 : 5;
+  const scaleBarPx = Math.round(scaleBarKm / kmPerPixel);
+  const scaleBarX = plotX + 12;
+  const scaleBarY = plotY + plotH - 24;
+  ctx.strokeStyle = "rgba(245,247,250,0.6)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(scaleBarX, scaleBarY);
+  ctx.lineTo(scaleBarX + scaleBarPx, scaleBarY);
+  // End ticks
+  ctx.moveTo(scaleBarX, scaleBarY - 4); ctx.lineTo(scaleBarX, scaleBarY + 4);
+  ctx.moveTo(scaleBarX + scaleBarPx, scaleBarY - 4); ctx.lineTo(scaleBarX + scaleBarPx, scaleBarY + 4);
+  ctx.stroke();
+  ctx.fillStyle = "rgba(245,247,250,0.6)";
+  ctx.font = `500 ${Math.round(W * 0.01)}px ui-monospace, monospace`;
+  ctx.textBaseline = "bottom";
+  ctx.textAlign = "left";
+  ctx.fillText(`0`, scaleBarX - 2, scaleBarY - 5);
+  ctx.textAlign = "right";
+  ctx.fillText(`${scaleBarKm} km`, scaleBarX + scaleBarPx + 2, scaleBarY - 5);
+  ctx.textAlign = "left";
+
+  // ----- North indicator (top-right of map) -----
+  const northX = plotX + plotW - 20;
+  const northY = plotY + 16;
+  ctx.strokeStyle = "rgba(245,247,250,0.5)";
+  ctx.fillStyle = "rgba(245,247,250,0.5)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(northX, northY - 8); // tip
+  ctx.lineTo(northX - 5, northY + 4);
+  ctx.lineTo(northX, northY + 1);
+  ctx.lineTo(northX + 5, northY + 4);
+  ctx.closePath();
+  ctx.fill();
+  ctx.font = `600 ${Math.round(W * 0.01)}px ui-sans-serif, sans-serif`;
+  ctx.textBaseline = "bottom";
+  ctx.textAlign = "center";
+  ctx.fillText("N", northX, northY - 10);
+  ctx.textAlign = "left";
 
   // ----- 7. Footer (source + attribution) -----
   const footerY = H - PAD;

@@ -1,15 +1,9 @@
-// SEISMO PH — Unified AI client with retry, timeout, and error logging.
-// Uses Google Gemini API (works on Vercel) with z-ai-web-dev-sdk fallback.
+// SEISMO PH — Unified AI client using Google Generative AI SDK.
+// Uses the official @google/generative-ai package for reliable model access.
+
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const GEMINI_API_KEY = process.env.GOOGLE_AI_API_KEY;
-
-const GEMINI_MODELS = [
-  "gemini-2.0-flash-001",
-  "gemini-2.0-flash",
-  "gemini-1.5-flash",
-  "gemini-1.5-pro",
-  "gemini-pro",
-];
 
 const MAX_RETRIES = 2;
 const REQUEST_TIMEOUT_MS = 25000;
@@ -29,60 +23,59 @@ export interface AiResult {
   durationMs: number;
 }
 
-/** Sleep for ms milliseconds. */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Generate text using Google Gemini API with retry. */
+/** Generate text using Google Gemini via the official SDK. */
 async function generateWithGemini(
   systemPrompt: string,
   userPrompt: string,
   requestId: string,
 ): Promise<string> {
+  if (!GEMINI_API_KEY) throw new Error("NO_API_KEY");
+
+  const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+
+  // Try multiple model names — Google frequently renames/deprecates models.
+  const modelNames = [
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-pro",
+    "gemini-1.5-pro-latest",
+    "gemini-pro",
+  ];
+
   let lastError = "";
 
-  for (const model of GEMINI_MODELS) {
+  for (const modelName of modelNames) {
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: systemPrompt }] },
-          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-          generationConfig: { temperature: 0.7, maxOutputTokens: 500 },
-        }),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        systemInstruction: systemPrompt,
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 500,
+        },
       });
 
-      if (!res.ok) {
-        const err = await res.text();
-        lastError = `${model}: ${res.status}`;
-        console.error(`[ai:${requestId}] Gemini ${model} failed: ${res.status}`, err.slice(0, 200));
-        if (res.status === 404) continue;
-        if (res.status === 429) {
-          // Rate limited — wait and retry
-          await sleep(RETRY_DELAY_MS * 2);
-          continue;
-        }
-        if (res.status === 400 && err.includes("location")) {
-          throw new Error(`LOCATION_RESTRICTED`);
-        }
+      const result = await model.generateContent(userPrompt);
+      const text = result.response.text();
+
+      if (!text || text.trim().length === 0) {
+        lastError = `${modelName}: empty response`;
         continue;
       }
 
-      const data = await res.json();
-      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) {
-        lastError = `${model}: empty response`;
-        continue;
-      }
-      console.log(`[ai:${requestId}] Gemini ${model} success`);
+      console.log(`[ai:${requestId}] Gemini ${modelName} success`);
       return text.trim();
     } catch (e: unknown) {
-      lastError = String(e).slice(0, 150);
-      if (String(e).includes("LOCATION_RESTRICTED") || String(e).includes("location")) {
+      lastError = `${modelName}: ${String(e).slice(0, 120)}`;
+      console.error(`[ai:${requestId}] Gemini ${modelName} failed:`, lastError);
+      // If it's a not-found error, try next model
+      if (String(e).includes("404") || String(e).includes("not found")) continue;
+      // If it's a location error, don't try more models
+      if (String(e).includes("location") || String(e).includes("403")) {
         throw new Error("LOCATION_RESTRICTED");
       }
       continue;
@@ -92,7 +85,7 @@ async function generateWithGemini(
   throw new Error(`All Gemini models failed: ${lastError}`);
 }
 
-/** Generate text using z-ai-web-dev-sdk. */
+/** Generate text using z-ai-web-dev-sdk (local sandbox fallback). */
 async function generateWithZai(
   systemPrompt: string,
   userPrompt: string,
@@ -114,8 +107,8 @@ async function generateWithZai(
 }
 
 /**
- * Generate text using the best available AI provider with retry + timeout.
- * Returns a structured result with request ID and timing.
+ * Generate text with retry, timeout, and proper error handling.
+ * Returns structured result with request ID and timing.
  */
 export async function generateText(
   systemPrompt: string,
@@ -130,20 +123,24 @@ export async function generateText(
       let text: string;
       let provider: string;
 
+      // Try Gemini first if API key is set
       if (GEMINI_API_KEY) {
         try {
           text = await generateWithGemini(systemPrompt, userPrompt, requestId);
           provider = "gemini";
         } catch (e) {
-          if (String(e).includes("LOCATION_RESTRICTED")) {
+          const errStr = String(e);
+          if (errStr.includes("LOCATION_RESTRICTED")) {
             console.log(`[ai:${requestId}] Gemini location-restricted, using z-ai`);
           } else {
-            console.error(`[ai:${requestId}] Gemini attempt ${attempt} failed:`, String(e).slice(0, 120));
+            console.error(`[ai:${requestId}] Gemini attempt ${attempt} failed:`, errStr.slice(0, 120));
           }
+          // Fallback to z-ai
           text = await generateWithZai(systemPrompt, userPrompt, requestId);
           provider = "z-ai";
         }
       } else {
+        // No Gemini key — use z-ai directly
         text = await generateWithZai(systemPrompt, userPrompt, requestId);
         provider = "z-ai";
       }
