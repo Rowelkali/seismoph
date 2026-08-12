@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { normalizeLocation } from "@/lib/text-utils";
 import { MagnitudeBadge, DepthTag } from "./MagnitudeBadge";
 import { DepthCrossSection } from "./DepthCrossSection";
 import { IntensityScale } from "./IntensityScale";
@@ -68,7 +69,7 @@ export function DetailPanel({ earthquake, loading, onClose, className }: Props) 
   const share = async () => {
     const url = `${window.location.origin}/?eq=${eq.id}`;
     try {
-      if (navigator.share) await navigator.share({ title: magLabel(eq), text: eq.locationDescription, url });
+      if (navigator.share) await navigator.share({ title: magLabel(eq), text: normalizeLocation(eq.locationDescription), url });
       else { await navigator.clipboard?.writeText(url); toast.success("Link copied"); }
     } catch { /* user cancelled */ }
   };
@@ -84,7 +85,7 @@ export function DetailPanel({ earthquake, loading, onClose, className }: Props) 
             <DepthTag depthKm={eq.depthKm} className="text-muted-foreground border border-border" />
           </div>
           <h2 className="mt-2 text-sm font-semibold leading-snug line-clamp-2">
-            {eq.locationDescription}
+            {normalizeLocation(eq.locationDescription)}
           </h2>
           <div className="mt-1 flex items-center gap-2">
             {eq.source === "DEV-SEED" ? (

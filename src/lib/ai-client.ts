@@ -1,10 +1,8 @@
-// SEISMO PH — Unified AI client.
-// Uses Google Gemini API (works on Vercel) with z-ai-web-dev-sdk fallback
-// (for local sandbox where Google API may be location-restricted).
+// SEISMO PH — Unified AI client with retry, timeout, and error logging.
+// Uses Google Gemini API (works on Vercel) with z-ai-web-dev-sdk fallback.
 
 const GEMINI_API_KEY = process.env.GOOGLE_AI_API_KEY;
 
-// Try multiple model names — Google frequently renames/deprecates models.
 const GEMINI_MODELS = [
   "gemini-2.0-flash-001",
   "gemini-2.0-flash",
@@ -13,8 +11,35 @@ const GEMINI_MODELS = [
   "gemini-pro",
 ];
 
-/** Generate text using Google Gemini API (REST, no SDK needed). */
-async function generateWithGemini(systemPrompt: string, userPrompt: string): Promise<string> {
+const MAX_RETRIES = 2;
+const REQUEST_TIMEOUT_MS = 25000;
+const RETRY_DELAY_MS = 1000;
+
+/** Generate a unique request ID for logging. */
+export function generateRequestId(): string {
+  const ts = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const rand = Math.random().toString(36).slice(2, 7).toUpperCase();
+  return `ai_${ts}_${rand}`;
+}
+
+export interface AiResult {
+  text: string;
+  requestId: string;
+  provider: string;
+  durationMs: number;
+}
+
+/** Sleep for ms milliseconds. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Generate text using Google Gemini API with retry. */
+async function generateWithGemini(
+  systemPrompt: string,
+  userPrompt: string,
+  requestId: string,
+): Promise<string> {
   let lastError = "";
 
   for (const model of GEMINI_MODELS) {
@@ -28,26 +53,38 @@ async function generateWithGemini(systemPrompt: string, userPrompt: string): Pro
           contents: [{ role: "user", parts: [{ text: userPrompt }] }],
           generationConfig: { temperature: 0.7, maxOutputTokens: 500 },
         }),
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
 
       if (!res.ok) {
         const err = await res.text();
         lastError = `${model}: ${res.status}`;
-        if (res.status === 404) continue; // try next model
-        if (res.status === 400 && err.includes("location")) {
-          throw new Error(`Gemini location-restricted: ${err.slice(0, 100)}`);
+        console.error(`[ai:${requestId}] Gemini ${model} failed: ${res.status}`, err.slice(0, 200));
+        if (res.status === 404) continue;
+        if (res.status === 429) {
+          // Rate limited — wait and retry
+          await sleep(RETRY_DELAY_MS * 2);
+          continue;
         }
-        throw new Error(`Gemini ${lastError}: ${err.slice(0, 150)}`);
+        if (res.status === 400 && err.includes("location")) {
+          throw new Error(`LOCATION_RESTRICTED`);
+        }
+        continue;
       }
 
       const data = await res.json();
       const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) { lastError = `${model}: empty`; continue; }
+      if (!text) {
+        lastError = `${model}: empty response`;
+        continue;
+      }
+      console.log(`[ai:${requestId}] Gemini ${model} success`);
       return text.trim();
     } catch (e: unknown) {
       lastError = String(e).slice(0, 150);
-      if (String(e).includes("location")) throw e; // don't try more models
+      if (String(e).includes("LOCATION_RESTRICTED") || String(e).includes("location")) {
+        throw new Error("LOCATION_RESTRICTED");
+      }
       continue;
     }
   }
@@ -55,8 +92,12 @@ async function generateWithGemini(systemPrompt: string, userPrompt: string): Pro
   throw new Error(`All Gemini models failed: ${lastError}`);
 }
 
-/** Generate text using z-ai-web-dev-sdk (local sandbox fallback). */
-async function generateWithZai(systemPrompt: string, userPrompt: string): Promise<string> {
+/** Generate text using z-ai-web-dev-sdk. */
+async function generateWithZai(
+  systemPrompt: string,
+  userPrompt: string,
+  requestId: string,
+): Promise<string> {
   const ZAI = (await import("z-ai-web-dev-sdk")).default;
   const zai = await ZAI.create();
   const completion = await zai.chat.completions.create({
@@ -68,21 +109,73 @@ async function generateWithZai(systemPrompt: string, userPrompt: string): Promis
   });
   const text = completion.choices[0]?.message?.content;
   if (!text) throw new Error("z-ai returned empty response");
+  console.log(`[ai:${requestId}] z-ai success`);
   return text.trim();
 }
 
 /**
- * Generate text using the best available AI provider.
- * Tries Google Gemini first (for Vercel production), falls back to
- * z-ai-web-dev-sdk (for local sandbox where Gemini may be location-restricted).
+ * Generate text using the best available AI provider with retry + timeout.
+ * Returns a structured result with request ID and timing.
  */
-export async function generateText(systemPrompt: string, userPrompt: string): Promise<string> {
-  if (GEMINI_API_KEY) {
+export async function generateText(
+  systemPrompt: string,
+  userPrompt: string,
+): Promise<AiResult> {
+  const requestId = generateRequestId();
+  const startTime = Date.now();
+  let lastError = "";
+
+  for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
     try {
-      return await generateWithGemini(systemPrompt, userPrompt);
+      let text: string;
+      let provider: string;
+
+      if (GEMINI_API_KEY) {
+        try {
+          text = await generateWithGemini(systemPrompt, userPrompt, requestId);
+          provider = "gemini";
+        } catch (e) {
+          if (String(e).includes("LOCATION_RESTRICTED")) {
+            console.log(`[ai:${requestId}] Gemini location-restricted, using z-ai`);
+          } else {
+            console.error(`[ai:${requestId}] Gemini attempt ${attempt} failed:`, String(e).slice(0, 120));
+          }
+          text = await generateWithZai(systemPrompt, userPrompt, requestId);
+          provider = "z-ai";
+        }
+      } else {
+        text = await generateWithZai(systemPrompt, userPrompt, requestId);
+        provider = "z-ai";
+      }
+
+      return {
+        text,
+        requestId,
+        provider,
+        durationMs: Date.now() - startTime,
+      };
     } catch (e) {
-      console.error("[ai] Gemini failed, trying z-ai:", String(e).slice(0, 120));
+      lastError = String(e).slice(0, 200);
+      console.error(`[ai:${requestId}] Attempt ${attempt} failed:`, lastError);
+      if (attempt < MAX_RETRIES + 1) {
+        await sleep(RETRY_DELAY_MS * attempt);
+      }
     }
   }
-  return await generateWithZai(systemPrompt, userPrompt);
+
+  const durationMs = Date.now() - startTime;
+  console.error(`[ai:${requestId}] All attempts failed after ${durationMs}ms:`, lastError);
+  throw new AiError("AI service temporarily unavailable", requestId, durationMs);
+}
+
+/** Custom error class that carries the request ID. */
+export class AiError extends Error {
+  constructor(
+    message: string,
+    public requestId: string,
+    public durationMs: number,
+  ) {
+    super(message);
+    this.name = "AiError";
+  }
 }

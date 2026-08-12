@@ -13,6 +13,7 @@
 import { useCallback, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { normalizeLocation, formatCoordinates } from "@/lib/text-utils";
 import {
   Loader2, Image as ImageIcon, Download, Share2, AlertTriangle, X, MapPin,
 } from "lucide-react";
@@ -166,11 +167,34 @@ function wrapText(
   return lines;
 }
 
+/** Load a static map image from CARTO's static map API for the earthquake location.
+ *  Returns an HTMLImageElement or null if loading fails. */
+async function loadStaticMap(eq: EarthquakeEvent, mapW: number, mapH: number): Promise<HTMLImageElement | null> {
+  try {
+    // Calculate appropriate zoom based on magnitude (bigger = wider context)
+    const zoom = eq.magnitude >= 6 ? 6 : eq.magnitude >= 4 ? 7 : 8;
+    // Use CARTO static maps API (free, no key needed for dark theme)
+    const url = `https://staticmap.openstreetmap.de/staticmap.php?center=${eq.latitude},${eq.longitude}&zoom=${zoom}&size=${mapW}x${mapH}&maptype=mapnik`;
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = url;
+      // Timeout after 8s
+      setTimeout(() => resolve(null), 8000);
+    });
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Draw the share card onto the supplied canvas using only `eq` values.
  * Layout adapts to the canvas dimensions; all sections scale proportionally.
+ * Now async — loads a real static map image.
  */
-function drawShareCard(
+async function drawShareCard(
   canvas: HTMLCanvasElement, eq: EarthquakeEvent, format: CardFormat,
 ) {
   const ctx = canvas.getContext("2d");
@@ -334,7 +358,7 @@ function drawShareCard(
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
   const locLines = wrapText(
-    ctx, eq.locationDescription, PAD, locY, W - PAD * 2, Math.round(W * 0.044), 2,
+    ctx, normalizeLocation(eq.locationDescription), PAD, locY, W - PAD * 2, Math.round(W * 0.044), 2,
   );
   const locBlockH = locLines.length * Math.round(W * 0.044);
 
@@ -349,7 +373,7 @@ function drawShareCard(
   const facts: Fact[] = [
     { label: "FOCAL DEPTH", value: `${Math.round(eq.depthKm)} km` },
     { label: "ORIGIN TIME (PHT)", value: formatPHT(eq.originTime) },
-    { label: "COORDINATES", value: `${eq.latitude.toFixed(3)}°, ${eq.longitude.toFixed(3)}°` },
+    { label: "COORDINATES", value: formatCoordinates(eq.latitude, eq.longitude) },
     { label: "EVENT TYPE", value: eq.eventType },
   ];
 
@@ -415,16 +439,32 @@ function drawShareCard(
   // Clamp
   if (mapH < Math.round(W * 0.3)) mapH = Math.round(W * 0.3);
 
+  // Try to load a real static map image for the earthquake location
+  const staticMap = await loadStaticMap(eq, mapW, mapH);
+
   // Map background panel
   roundedRect(ctx, mapX, mapY, mapW, mapH, 16);
-  const mapBg = ctx.createLinearGradient(mapX, mapY, mapX + mapW, mapY + mapH);
-  mapBg.addColorStop(0, "rgba(95,179,168,0.06)");
-  mapBg.addColorStop(1, "rgba(255,255,255,0.02)");
-  ctx.fillStyle = mapBg;
-  ctx.fill();
-  ctx.strokeStyle = "rgba(255,255,255,0.08)";
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
+  // If we got a real map image, draw it clipped to the rounded rect
+  if (staticMap) {
+    ctx.save();
+    ctx.clip(); // clip to the rounded rect path
+    // Draw the map image, covering the full map area
+    ctx.drawImage(staticMap, mapX, mapY, mapW, mapH);
+    // Add a dark overlay for the scientific theme
+    ctx.fillStyle = "rgba(12, 15, 20, 0.35)";
+    ctx.fillRect(mapX, mapY, mapW, mapH);
+    ctx.restore();
+  } else {
+    // Fallback: draw the stylized polygon map if static map fails
+    const mapBg = ctx.createLinearGradient(mapX, mapY, mapX + mapW, mapY + mapH);
+    mapBg.addColorStop(0, "rgba(95,179,168,0.06)");
+    mapBg.addColorStop(1, "rgba(255,255,255,0.02)");
+    ctx.fillStyle = mapBg;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.08)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
 
   // Map title
   ctx.fillStyle = "rgba(245,247,250,0.55)";
@@ -433,7 +473,7 @@ function drawShareCard(
   ctx.textAlign = "left";
   ctx.fillText("EPICENTER LOCATION · PHILIPPINE ISLANDS", mapX + 16, mapY + 12);
   ctx.textAlign = "right";
-  ctx.fillText(`${eq.latitude.toFixed(2)}°N  ${eq.longitude.toFixed(2)}°E`, mapX + mapW - 16, mapY + 12);
+  ctx.fillText(formatCoordinates(eq.latitude, eq.longitude), mapX + mapW - 16, mapY + 12);
   ctx.textAlign = "left";
 
   // Inner plot region
@@ -594,7 +634,7 @@ export function ShareCard({ earthquake, className }: ShareCardProps) {
       const canvas = document.createElement("canvas");
       canvas.width = spec.w;
       canvas.height = spec.h;
-      drawShareCard(canvas, earthquake, format);
+      await drawShareCard(canvas, earthquake, format);
       canvasRef.current = canvas;
       // Preview (downscaled via CSS) + downloadable blob URL.
       const preview = canvas.toDataURL("image/png");

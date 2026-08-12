@@ -107,28 +107,36 @@ Style guide: ${STYLE_GUIDE[style]}
 
 Write the caption now. Follow every rule in your system instructions. Remember: output ONLY the caption text (the mandatory source line is the final line).`;
 
-  // Use the unified AI client (Google Gemini on Vercel, z-ai fallback locally)
-  let caption = await generateText(SYSTEM_PROMPT, userPrompt);
+  // Use the unified AI client with retry + timeout + request ID
+  try {
+    const result = await generateText(SYSTEM_PROMPT, userPrompt);
+    let caption = result.text;
 
-  // Hard-append the mandatory source line. Strip it from the model output first
-  // to avoid duplication if the model included it.
-  const disclaimer =
-    "Source: DOST-PHIVOLCS. Please refer to official government channels for verified warnings and advisories.";
-  // Remove any line containing the disclaimer from the model output.
-  caption = caption
-    .split(/\n/)
-    .filter((l) => !/Source:\s*DOST-PHIVOLCS/i.test(l))
-    .join("\n")
-    .trim();
-  caption = `${caption}\n\n${disclaimer}`;
+    // Hard-append the mandatory source line
+    const disclaimer =
+      "Source: DOST-PHIVOLCS. Please refer to official government channels for verified warnings and advisories.";
+    caption = caption
+      .split(/\n/)
+      .filter((l) => !/Source:\s*DOST-PHIVOLCS/i.test(l))
+      .join("\n")
+      .trim();
+    caption = `${caption}\n\n${disclaimer}`;
 
-  return jsonOk({
-    data: {
-      caption,
-      disclaimer,
-      style,
-      earthquake: mapEarthquake(eq),
-      grounded: true,
-    },
-  });
+    return jsonOk({
+      data: {
+        caption,
+        disclaimer,
+        style,
+        earthquake: mapEarthquake(eq),
+        grounded: true,
+        requestId: result.requestId,
+      },
+    });
+  } catch (e) {
+    const requestId = e instanceof Error && "requestId" in e ? (e as { requestId: string }).requestId : "unknown";
+    return jsonError(
+      { code: "AI_UNAVAILABLE", message: "AI caption service temporarily unavailable. Please try again.", details: { requestId } },
+      503,
+    );
+  }
 });

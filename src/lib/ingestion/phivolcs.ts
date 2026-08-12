@@ -49,6 +49,7 @@
 import type { EarthquakeSourceAdapter, FetchResult, RawEarthquake, RawIntensity } from "./source";
 import type { EarthquakeSource } from "@/lib/types";
 import { logger } from "@/lib/logger";
+import { normalizeLocation } from "@/lib/text-utils";
 
 const ATTRIBUTION =
   "DOST-PHIVOLCS — Philippine Institute of Volcanology and Seismology. Real-time earthquake bulletins retrieved from earthquake.phivolcs.dost.gov.ph (Seismological Observation and Earthquake Prediction Division). Data © PHIVOLCS/DOST.";
@@ -283,7 +284,9 @@ function parseBulletin(html: string, link: string): RawEarthquake | null {
     depthKm: Math.round(depthKm * 10) / 10,
     magnitude: Math.round(magnitude * 100) / 100,
     magnitudeType,
-    locationDescription: locStr.trim(),
+    // Normalize the location description: fix corrupted degree symbols,
+    // remove leading zeros, clean up formatting.
+    locationDescription: normalizeLocation(locStr.trim()),
     eventType: eventType as RawEarthquake["eventType"],
     status: "REVIEWED", // PHIVOLCS bulletins are reviewed
     intensities,

@@ -2,6 +2,7 @@
 
 import type { Earthquake, IntensityReport } from "@prisma/client";
 import type { EarthquakeEvent, IntensityReport as IntensityReportDTO } from "@/lib/types";
+import { normalizeLocation } from "@/lib/text-utils";
 
 export function mapIntensity(i: IntensityReport): IntensityReportDTO {
   return {
@@ -33,7 +34,7 @@ export function mapEarthquake(
     depthKm: e.depthKm,
     magnitude: e.magnitude,
     magnitudeType: e.magnitudeType,
-    locationDescription: e.locationDescription,
+    locationDescription: normalizeLocation(e.locationDescription),
     eventType: e.eventType as EarthquakeEvent["eventType"],
     status: e.status as EarthquakeEvent["status"],
     dataVersion: e.dataVersion,

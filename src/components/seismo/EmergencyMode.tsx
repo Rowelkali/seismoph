@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { normalizeLocation } from "@/lib/text-utils";
 import { useRecentEarthquakes } from "@/hooks/use-seismo-data";
 import { useSeismo } from "@/lib/store";
 import { MagnitudeBadge } from "./MagnitudeBadge";
@@ -65,7 +66,7 @@ export function EmergencyMode() {
           <div className="rounded-lg border border-border bg-card/40 p-3 text-sm">
             <p className="flex items-start gap-1.5">
               <MapPin className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
-              <span>{significantEvent.locationDescription}</span>
+              <span>{normalizeLocation(significantEvent.locationDescription)}</span>
             </p>
             <p className="mt-1 text-xs text-muted-foreground font-mono">
               {formatPHT(significantEvent.originTime)} PHT · {significantEvent.latitude.toFixed(3)}°, {significantEvent.longitude.toFixed(3)}°

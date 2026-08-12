@@ -2,6 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import { MagnitudeBadge } from "./MagnitudeBadge";
+import { normalizeLocation } from "@/lib/text-utils";
 import { timeAgoPHT } from "@/lib/ui";
 import { useSeismo } from "@/lib/store";
 import type { EarthquakeEvent } from "@/lib/types";
@@ -33,12 +34,12 @@ export function EventStream({ events, onPick, className, connected }: Props) {
                   key={eq.id}
                   onClick={() => onPick?.(eq)}
                   className="group flex shrink-0 items-center gap-1.5 rounded border border-border bg-card/40 px-1.5 py-1 transition-colors hover:border-primary/60 hover:bg-primary/10"
-                  title={`${eq.magnitude.toFixed(1)} · ${eq.locationDescription} · ${timeAgoPHT(eq.originTime)}`}
+                  title={`${eq.magnitude.toFixed(1)} · ${normalizeLocation(eq.locationDescription)} · ${timeAgoPHT(eq.originTime)}`}
                 >
                   <Radio className="h-3 w-3 text-primary" />
                   <MagnitudeBadge magnitude={eq.magnitude} magnitudeType={eq.magnitudeType} size="sm" showLabel={false} />
                   <span className="max-w-[120px] truncate text-[11px] text-muted-foreground group-hover:text-foreground">
-                    {eq.locationDescription}
+                    {normalizeLocation(eq.locationDescription)}
                   </span>
                   <span className="font-mono text-[10px] text-muted-foreground">{timeAgoPHT(eq.originTime)}</span>
                 </button>

@@ -2,6 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import { MagnitudeBadge, DepthTag } from "./MagnitudeBadge";
+import { normalizeLocation } from "@/lib/text-utils";
 import { timeAgoPHT } from "@/lib/ui";
 import type { EarthquakeEvent } from "@/lib/types";
 import { MapPin } from "lucide-react";
@@ -34,7 +35,7 @@ export function EventCard({ eq, selected, compact, onClick, className }: Props) 
       </div>
       <p className="mt-1.5 text-sm leading-snug line-clamp-2">
         <MapPin className="inline h-3 w-3 mr-1 -mt-0.5 text-muted-foreground" aria-hidden="true" />
-        {eq.locationDescription}
+        {normalizeLocation(eq.locationDescription)}
       </p>
       <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground font-mono">
         <span>{timeAgoPHT(eq.originTime)}</span>

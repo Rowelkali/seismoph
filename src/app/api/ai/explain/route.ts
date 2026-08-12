@@ -114,16 +114,26 @@ User question: ${userQuestion}
 
 Explain using ONLY the data above. Follow all rules in your system instructions.`;
 
-  // Use the unified AI client (Google Gemini on Vercel, z-ai fallback locally)
-  const explanation = await generateText(SYSTEM_PROMPT, userPrompt);
+  // Use the unified AI client with retry + timeout + request ID
+  try {
+    const result = await generateText(SYSTEM_PROMPT, userPrompt);
 
-  return jsonOk({
-    data: {
-      explanation,
-      disclaimer:
-        "AI-generated explanation. Not an official forecast or warning. Verify with DOST-PHIVOLCS for authoritative information.",
-      earthquake: mapEarthquake(eq),
-      grounded: true,
-    },
-  });
+    return jsonOk({
+      data: {
+        explanation: result.text,
+        disclaimer:
+          "AI-generated explanation. Not an official forecast or warning. Verify with DOST-PHIVOLCS for authoritative information.",
+        earthquake: mapEarthquake(eq),
+        grounded: true,
+        requestId: result.requestId,
+      },
+    });
+  } catch (e) {
+    // Return a controlled error, never a raw 500
+    const requestId = e instanceof Error && "requestId" in e ? (e as { requestId: string }).requestId : "unknown";
+    return jsonError(
+      { code: "AI_UNAVAILABLE", message: "AI service temporarily unavailable. Please try again.", details: { requestId } },
+      503,
+    );
+  }
 });
