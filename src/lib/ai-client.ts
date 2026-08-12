@@ -1,15 +1,15 @@
-// SEISMO PH — Unified AI client using Google Generative AI SDK.
-// Uses the official @google/generative-ai package for reliable model access.
+// SEISMO PH — Unified AI client.
+// Three-tier fallback:
+//   1. Google Gemini SDK (works on Vercel with GOOGLE_AI_API_KEY)
+//   2. Direct Gemini REST API (fallback if SDK has issues)
+//   3. z-ai-web-dev-sdk (works in local sandbox only)
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const GEMINI_API_KEY = process.env.GOOGLE_AI_API_KEY;
-
 const MAX_RETRIES = 2;
-const REQUEST_TIMEOUT_MS = 25000;
 const RETRY_DELAY_MS = 1000;
 
-/** Generate a unique request ID for logging. */
 export function generateRequestId(): string {
   const ts = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const rand = Math.random().toString(36).slice(2, 7).toUpperCase();
@@ -27,8 +27,8 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Generate text using Google Gemini via the official SDK. */
-async function generateWithGemini(
+/** Tier 1: Google Gemini via official SDK */
+async function generateWithGeminiSDK(
   systemPrompt: string,
   userPrompt: string,
   requestId: string,
@@ -36,8 +36,6 @@ async function generateWithGemini(
   if (!GEMINI_API_KEY) throw new Error("NO_API_KEY");
 
   const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-
-  // Try multiple model names — Google frequently renames/deprecates models.
   const modelNames = [
     "gemini-1.5-flash",
     "gemini-1.5-flash-latest",
@@ -47,45 +45,86 @@ async function generateWithGemini(
   ];
 
   let lastError = "";
-
   for (const modelName of modelNames) {
     try {
       const model = genAI.getGenerativeModel({
         model: modelName,
         systemInstruction: systemPrompt,
-        generationConfig: {
-          temperature: 0.7,
-          maxOutputTokens: 500,
-        },
+        generationConfig: { temperature: 0.7, maxOutputTokens: 500 },
       });
-
       const result = await model.generateContent(userPrompt);
       const text = result.response.text();
-
       if (!text || text.trim().length === 0) {
-        lastError = `${modelName}: empty response`;
+        lastError = `${modelName}: empty`;
         continue;
       }
-
-      console.log(`[ai:${requestId}] Gemini ${modelName} success`);
+      console.log(`[ai:${requestId}] Gemini SDK ${modelName} success`);
       return text.trim();
     } catch (e: unknown) {
-      lastError = `${modelName}: ${String(e).slice(0, 120)}`;
-      console.error(`[ai:${requestId}] Gemini ${modelName} failed:`, lastError);
-      // If it's a not-found error, try next model
+      lastError = `${modelName}: ${String(e).slice(0, 100)}`;
+      console.error(`[ai:${requestId}] Gemini SDK ${modelName} failed:`, lastError);
       if (String(e).includes("404") || String(e).includes("not found")) continue;
-      // If it's a location error, don't try more models
-      if (String(e).includes("location") || String(e).includes("403")) {
-        throw new Error("LOCATION_RESTRICTED");
-      }
+      if (String(e).includes("location") || String(e).includes("403")) continue;
       continue;
     }
   }
-
-  throw new Error(`All Gemini models failed: ${lastError}`);
+  throw new Error(`Gemini SDK all failed: ${lastError}`);
 }
 
-/** Generate text using z-ai-web-dev-sdk (local sandbox fallback). */
+/** Tier 2: Direct Gemini REST API (no SDK, just fetch) */
+async function generateWithGeminiREST(
+  systemPrompt: string,
+  userPrompt: string,
+  requestId: string,
+): Promise<string> {
+  if (!GEMINI_API_KEY) throw new Error("NO_API_KEY");
+
+  const modelNames = [
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-pro",
+    "gemini-1.5-pro-latest",
+    "gemini-pro",
+  ];
+
+  let lastError = "";
+  for (const modelName of modelNames) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_API_KEY}`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: systemPrompt }] },
+          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+          generationConfig: { temperature: 0.7, maxOutputTokens: 500 },
+        }),
+        signal: AbortSignal.timeout(25000),
+      });
+
+      if (!res.ok) {
+        const err = await res.text();
+        lastError = `${modelName}: ${res.status}`;
+        console.error(`[ai:${requestId}] Gemini REST ${modelName} failed: ${res.status}`);
+        if (res.status === 404) continue;
+        if (res.status === 400 && err.includes("location")) continue;
+        continue;
+      }
+
+      const data = await res.json();
+      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) { lastError = `${modelName}: empty`; continue; }
+      console.log(`[ai:${requestId}] Gemini REST ${modelName} success`);
+      return text.trim();
+    } catch (e) {
+      lastError = String(e).slice(0, 100);
+      continue;
+    }
+  }
+  throw new Error(`Gemini REST all failed: ${lastError}`);
+}
+
+/** Tier 3: z-ai-web-dev-sdk (local sandbox only — needs /etc/.z-ai-config) */
 async function generateWithZai(
   systemPrompt: string,
   userPrompt: string,
@@ -101,14 +140,14 @@ async function generateWithZai(
     thinking: { type: "disabled" },
   });
   const text = completion.choices[0]?.message?.content;
-  if (!text) throw new Error("z-ai returned empty response");
+  if (!text) throw new Error("z-ai returned empty");
   console.log(`[ai:${requestId}] z-ai success`);
   return text.trim();
 }
 
 /**
- * Generate text with retry, timeout, and proper error handling.
- * Returns structured result with request ID and timing.
+ * Generate text with 3-tier fallback + retry + timeout.
+ * Tier 1: Gemini SDK → Tier 2: Gemini REST → Tier 3: z-ai (local only)
  */
 export async function generateText(
   systemPrompt: string,
@@ -123,21 +162,23 @@ export async function generateText(
       let text: string;
       let provider: string;
 
-      // Try Gemini first if API key is set
       if (GEMINI_API_KEY) {
+        // Tier 1: Gemini SDK
         try {
-          text = await generateWithGemini(systemPrompt, userPrompt, requestId);
-          provider = "gemini";
-        } catch (e) {
-          const errStr = String(e);
-          if (errStr.includes("LOCATION_RESTRICTED")) {
-            console.log(`[ai:${requestId}] Gemini location-restricted, using z-ai`);
-          } else {
-            console.error(`[ai:${requestId}] Gemini attempt ${attempt} failed:`, errStr.slice(0, 120));
+          text = await generateWithGeminiSDK(systemPrompt, userPrompt, requestId);
+          provider = "gemini-sdk";
+        } catch (sdkErr) {
+          console.log(`[ai:${requestId}] Gemini SDK failed, trying REST...`);
+          // Tier 2: Gemini REST
+          try {
+            text = await generateWithGeminiREST(systemPrompt, userPrompt, requestId);
+            provider = "gemini-rest";
+          } catch (restErr) {
+            console.log(`[ai:${requestId}] Gemini REST failed, trying z-ai...`);
+            // Tier 3: z-ai (local only)
+            text = await generateWithZai(systemPrompt, userPrompt, requestId);
+            provider = "z-ai";
           }
-          // Fallback to z-ai
-          text = await generateWithZai(systemPrompt, userPrompt, requestId);
-          provider = "z-ai";
         }
       } else {
         // No Gemini key — use z-ai directly
@@ -145,15 +186,10 @@ export async function generateText(
         provider = "z-ai";
       }
 
-      return {
-        text,
-        requestId,
-        provider,
-        durationMs: Date.now() - startTime,
-      };
+      return { text, requestId, provider, durationMs: Date.now() - startTime };
     } catch (e) {
       lastError = String(e).slice(0, 200);
-      console.error(`[ai:${requestId}] Attempt ${attempt} failed:`, lastError);
+      console.error(`[ai:${requestId}] Attempt ${attempt} fully failed:`, lastError);
       if (attempt < MAX_RETRIES + 1) {
         await sleep(RETRY_DELAY_MS * attempt);
       }
@@ -161,11 +197,9 @@ export async function generateText(
   }
 
   const durationMs = Date.now() - startTime;
-  console.error(`[ai:${requestId}] All attempts failed after ${durationMs}ms:`, lastError);
   throw new AiError("AI service temporarily unavailable", requestId, durationMs);
 }
 
-/** Custom error class that carries the request ID. */
 export class AiError extends Error {
   constructor(
     message: string,
