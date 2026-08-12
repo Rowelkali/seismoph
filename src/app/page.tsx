@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useSeismo } from "@/lib/store";
 import { useRealtime, useEarthquake, useRecentEarthquakes } from "@/hooks/use-seismo-data";
@@ -24,7 +24,7 @@ import { SafetyPanel } from "@/components/panels/SafetyPanel";
 import { AboutPanel } from "@/components/panels/AboutPanel";
 import type { EarthquakeEvent } from "@/lib/types";
 import {
-  Plus, Minus, Mountain, Compass, X, Layers as LayersIcon, LocateFixed,
+  Plus, Minus, Mountain, Compass, X, Layers as LayersIcon, LocateFixed, Volume2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -59,6 +59,50 @@ export default function Home() {
 
   const [command, setCommand] = useState<{ action: "reset" | "zoomIn" | "zoomOut"; nonce: number } | null>(null);
   const [layerOpen, setLayerOpen] = useState(false);
+
+  // Track previously-seen earthquake IDs to detect NEW earthquakes from polling.
+  // On Vercel there's no WebSocket, so the 30s auto-refetch is the only way to
+  // detect new events. When a new earthquake appears in the refetch that wasn't
+  // in the previous fetch, we trigger the alarm sound + toast.
+  const prevEarthquakeIdsRef = useRef<Set<string>>(new Set());
+  const isFirstFetchRef = useRef(true);
+
+  useEffect(() => {
+    if (!recent || recent.length === 0) return;
+
+    const currentIds = new Set(recent.map((eq) => eq.id));
+
+    // Skip the very first fetch (don't alarm on page load)
+    if (isFirstFetchRef.current) {
+      isFirstFetchRef.current = false;
+      prevEarthquakeIdsRef.current = currentIds;
+      return;
+    }
+
+    // Find new earthquakes that weren't in the previous fetch
+    const newEarthquakes = recent.filter(
+      (eq) => !prevEarthquakeIdsRef.current.has(eq.id) && eq.magnitude >= 3.0,
+    );
+
+    if (newEarthquakes.length > 0) {
+      // Trigger alarm for the largest new earthquake
+      const largest = newEarthquakes.reduce((a, b) =>
+        a.magnitude > b.magnitude ? a : b,
+      );
+      triggerForEarthquake(largest.id, largest.magnitude);
+
+      // Toast notification
+      if (largest.magnitude >= 4.0) {
+        toast.success(`⚠ M${largest.magnitude.toFixed(1)} earthquake detected`, {
+          description: largest.locationDescription,
+          duration: 8000,
+          action: { label: "Inspect", onClick: () => select(largest) },
+        });
+      }
+    }
+
+    prevEarthquakeIdsRef.current = currentIds;
+  }, [recent, triggerForEarthquake, select]);
 
   // MAP DATASET: Recent PHIVOLCS earthquakes shown on the map + any genuinely
   // new earthquakes from the realtime poll. Recent events appear immediately as
@@ -197,6 +241,17 @@ export default function Home() {
 
       {/* Emergency mode overlay — appears for M6+ events within last 2 hours */}
       <EmergencyMode />
+
+      {/* Audio enable banner — shows when browser requires interaction for sound */}
+      {!audioReady && settings.soundEnabled && (
+        <button
+          onClick={unlockAudio}
+          className="flex items-center justify-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-200 transition-colors hover:bg-amber-500/20 w-full"
+        >
+          <Volume2 className="h-3.5 w-3.5 text-amber-400" />
+          <span>🔊 Click here to enable earthquake alert sounds</span>
+        </button>
+      )}
 
       {!isOverlay && <DevDataBanner />}
 

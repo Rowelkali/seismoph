@@ -443,8 +443,16 @@ function drawShareCard(
   const plotW = mapW - plotPad * 2;
   const plotH = mapH - plotPad - Math.round(W * 0.04);
 
-  // Subtle lat/lon grid lines
-  ctx.strokeStyle = "rgba(255,255,255,0.05)";
+  // Subtle lat/lon grid lines + ocean background
+  // Ocean gradient (deep blue-teal, very subtle)
+  const oceanGrad = ctx.createLinearGradient(plotX, plotY, plotX, plotY + plotH);
+  oceanGrad.addColorStop(0, "rgba(12,15,20,0.5)");
+  oceanGrad.addColorStop(0.5, "rgba(20,40,50,0.3)");
+  oceanGrad.addColorStop(1, "rgba(12,15,20,0.5)");
+  ctx.fillStyle = oceanGrad;
+  ctx.fillRect(plotX, plotY, plotW, plotH);
+
+  ctx.strokeStyle = "rgba(94,234,212,0.06)";
   ctx.lineWidth = 1;
   for (let i = 1; i < 4; i++) {
     const gx = plotX + (plotW / 4) * i;
@@ -453,12 +461,17 @@ function drawShareCard(
     ctx.beginPath(); ctx.moveTo(plotX, gy); ctx.lineTo(plotX + plotW, gy); ctx.stroke();
   }
 
-  // Draw Philippine islands
+  // Draw Philippine islands with enhanced styling
   ctx.save();
-  ctx.fillStyle = "rgba(245,247,250,0.18)";
-  ctx.strokeStyle = "rgba(245,247,250,0.35)";
-  ctx.lineWidth = 1.4;
+  // Islands get a subtle land gradient fill + brighter outline
+  const landGrad = ctx.createLinearGradient(plotX, plotY, plotX, plotY + plotH);
+  landGrad.addColorStop(0, "rgba(94,234,212,0.15)");
+  landGrad.addColorStop(1, "rgba(245,247,250,0.12)");
+  ctx.fillStyle = landGrad;
+  ctx.strokeStyle = "rgba(94,234,212,0.5)";
+  ctx.lineWidth = 1.8;
   ctx.lineJoin = "round";
+  ctx.lineCap = "round";
   for (const island of PH_ISLANDS) {
     ctx.beginPath();
     island.forEach(([lon, lat], i) => {
@@ -470,6 +483,11 @@ function drawShareCard(
     ctx.fill();
     ctx.stroke();
   }
+  // Add a subtle glow under the islands
+  ctx.shadowColor = "rgba(94,234,212,0.3)";
+  ctx.shadowBlur = 8;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
   ctx.restore();
 
   // Draw epicenter marker at actual coordinates

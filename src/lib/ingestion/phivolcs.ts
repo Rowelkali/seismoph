@@ -148,16 +148,13 @@ export class PhivolcsAdapter implements EarthquakeSourceAdapter {
 
 // ---- HTTP fetch ----
 // The PHIVOLCS server's TLS certificate chain is not trusted by some
-// environments (like the development sandbox). In production (Vercel),
-// the CA bundle is proper and TLS verification works normally.
+// development environments. In production (Vercel), the CA bundle is proper
+// and the standard fetch() works without any TLS workaround.
 //
-// We try a standard fetch first. If it fails with a certificate error,
-// we temporarily disable TLS verification for that request only, then
-// re-enable it. This avoids the global NODE_TLS_REJECT_UNAUTHORIZED=0
-// security warning while still working in environments with missing CAs.
+// We NEVER set NODE_TLS_REJECT_UNAUTHORIZED in production (it triggers a
+// security warning on Vercel). The TLS workaround is only used in development.
 
 async function fetchText(url: string): Promise<string> {
-  // Try standard fetch first (works in production with proper CA bundle)
   try {
     const res = await fetch(url, {
       headers: { "User-Agent": "SEISMO-PH/1.0 (earthquake monitoring; +https://phivolcs.dost.gov.ph)" },
@@ -165,11 +162,15 @@ async function fetchText(url: string): Promise<string> {
     });
     if (res.ok) return await res.text();
     if (res.status !== 404) throw new Error(`HTTP ${res.status}`);
-    return ""; // 404 = bulletin removed, return empty
+    return ""; // 404 = bulletin removed
   } catch (e) {
     const errStr = String(e);
-    // If it's a TLS/certificate error, retry with TLS verification disabled
-    if (errStr.match(/certificate|CERT|TLS|ssl|UNABLE_TO_VERIFY/i)) {
+    // Only use TLS workaround in development (NODE_ENV !== production)
+    // and only if the error is a certificate issue.
+    if (
+      process.env.NODE_ENV !== "production" &&
+      errStr.match(/certificate|CERT|TLS|ssl|UNABLE_TO_VERIFY/i)
+    ) {
       const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
       process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
       try {
@@ -181,12 +182,8 @@ async function fetchText(url: string): Promise<string> {
         if (res.status === 404) return "";
         throw new Error(`HTTP ${res.status}`);
       } finally {
-        // Restore previous setting (undefined in production = TLS verified)
-        if (prev === undefined) {
-          delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-        } else {
-          process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
-        }
+        if (prev === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+        else process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
       }
     }
     throw e;
