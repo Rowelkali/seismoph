@@ -5,9 +5,7 @@ import { normalizeLocation } from "@/lib/text-utils";
 import { MagnitudeBadge, DepthTag } from "./MagnitudeBadge";
 import { DepthCrossSection } from "./DepthCrossSection";
 import { IntensityScale } from "./IntensityScale";
-import { AiExplainer } from "./AiExplainer";
 import { ShareCard } from "./ShareCard";
-import { AiCaption } from "./AiCaption";
 import { StatusIndicator } from "./StatusIndicator";
 import { formatPHT, formatPHTTime, peisDescription, magLabel } from "@/lib/ui";
 import { haversineKm, bearingDeg, bearingLabel, depthClass } from "@/lib/geo";
@@ -187,12 +185,8 @@ export function DetailPanel({ earthquake, loading, onClose, className }: Props) 
             measures how strongly shaking was felt at a specific place and varies by location.
           </div>
 
-          {/* AI explainer */}
-          <AiExplainer earthquake={eq} userLocation={userLocation} />
-
-          {/* Share Card + AI Caption — social-media-ready exports */}
+          {/* Share Card — social-media-ready export */}
           <ShareCard earthquake={eq} />
-          <AiCaption earthquake={eq} />
         </div>
       </div>
 
