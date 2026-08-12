@@ -1,11 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { normalizeLocation } from "@/lib/text-utils";
 import { MagnitudeBadge, DepthTag } from "./MagnitudeBadge";
 import { DepthCrossSection } from "./DepthCrossSection";
 import { IntensityScale } from "./IntensityScale";
 import { ShareCard } from "./ShareCard";
+import { Globe3D } from "./Globe3D";
 import { StatusIndicator } from "./StatusIndicator";
 import { formatPHT, formatPHTTime, peisDescription, magLabel } from "@/lib/ui";
 import { haversineKm, bearingDeg, bearingLabel, depthClass } from "@/lib/geo";
@@ -14,7 +16,7 @@ import { useSeismo } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import {
   X, MapPin, Clock, Layers3, Crosshair, Share2, Copy, Radio,
-  Activity, Navigation, AlertCircle,
+  Activity, Navigation, AlertCircle, Globe,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -30,6 +32,7 @@ export function DetailPanel({ earthquake, loading, onClose, className }: Props) 
   const setView = useSeismo((s) => s.setView);
   const selectEarthquake = useSeismo((s) => s.selectEarthquake);
   const reducedMotion = useSeismo((s) => s.settings.reducedMotion);
+  const [show3D, setShow3D] = useState(false);
 
   if (loading) {
     return (
@@ -146,10 +149,25 @@ export function DetailPanel({ earthquake, loading, onClose, className }: Props) 
             </div>
           )}
 
-          {/* depth cross-section */}
+          {/* depth cross-section + 3D globe toggle */}
           <div>
-            <SectionTitle icon={Layers3}>Depth cross-section</SectionTitle>
-            <DepthCrossSection earthquake={eq} userLocation={userLocation} reducedMotion={reducedMotion} />
+            <div className="flex items-center justify-between">
+              <SectionTitle icon={Layers3}>Depth visualization</SectionTitle>
+              <Button
+                size="sm"
+                variant={show3D ? "default" : "outline"}
+                className="h-6 gap-1 text-[10px]"
+                onClick={() => setShow3D(!show3D)}
+              >
+                <Globe className="h-3 w-3" />
+                {show3D ? "2D View" : "3D Globe"}
+              </Button>
+            </div>
+            {show3D ? (
+              <Globe3D earthquake={eq} className="h-64 w-full" onClose={() => setShow3D(false)} />
+            ) : (
+              <DepthCrossSection earthquake={eq} userLocation={userLocation} reducedMotion={reducedMotion} />
+            )}
           </div>
 
           {/* reported intensities */}

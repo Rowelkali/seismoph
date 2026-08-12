@@ -81,7 +81,7 @@ export default function Home() {
 
     // Find new earthquakes that weren't in the previous fetch
     const newEarthquakes = recent.filter(
-      (eq) => !prevEarthquakeIdsRef.current.has(eq.id) && eq.magnitude >= 3.0,
+      (eq) => !prevEarthquakeIdsRef.current.has(eq.id),
     );
 
     if (newEarthquakes.length > 0) {
@@ -91,14 +91,12 @@ export default function Home() {
       );
       triggerForEarthquake(largest.id, largest.magnitude);
 
-      // Toast notification
-      if (largest.magnitude >= 4.0) {
-        toast.success(`⚠ M${largest.magnitude.toFixed(1)} earthquake detected`, {
-          description: largest.locationDescription,
-          duration: 8000,
-          action: { label: "Inspect", onClick: () => select(largest) },
-        });
-      }
+      // Toast notification for ALL new events
+      toast.success(`⚠ M${largest.magnitude.toFixed(1)} earthquake detected`, {
+        description: largest.locationDescription,
+        duration: 8000,
+        action: { label: "Inspect", onClick: () => select(largest) },
+      });
     }
 
     prevEarthquakeIdsRef.current = currentIds;

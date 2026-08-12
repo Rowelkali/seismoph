@@ -22,8 +22,8 @@ import { PhivolcsAdapter } from "@/lib/ingestion/phivolcs";
 // The PhivolcsAdapter handles this per-request via a custom fetch wrapper.
 
 const POLL_INTERVAL_MS = 120_000; // 2 minutes
-const STALE_THRESHOLD_MS = 90_000; // if last source check > 90s ago, poll on demand
-const REALTIME_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours — only emit events within this window
+const STALE_THRESHOLD_MS = 60_000; // if last source check > 60s ago, poll on demand (more aggressive)
+const REALTIME_WINDOW_MS = 3 * 60 * 60 * 1000; // 3 hours — emit events within this window
 
 let pollInProgress = false;
 let lastPollAt: Date | null = null;
@@ -70,8 +70,8 @@ export async function pollPhivolcs(): Promise<{ created: number; emitted: number
     });
     const knownIds = new Set(existing.map((e) => e.externalId));
 
-    // Fetch only 5 new bulletins (memory-conservative)
-    const result = await adapter.fetch({ maxEvents: 5, knownIds });
+    // Fetch up to 10 new bulletins per poll (catches more new events)
+    const result = await adapter.fetch({ maxEvents: 10, knownIds });
 
     if (!result.ok) {
       logger.warn("poll.phivolcs.failed", { error: result.error }, "server-poller");
