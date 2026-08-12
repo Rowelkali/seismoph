@@ -156,6 +156,7 @@ export class PhivolcsAdapter implements EarthquakeSourceAdapter {
 // security warning on Vercel). The TLS workaround is only used in development.
 
 async function fetchText(url: string): Promise<string> {
+  // Try standard fetch first (works in production with proper CA bundle)
   try {
     const res = await fetch(url, {
       headers: { "User-Agent": "SEISMO-PH/1.0 (earthquake monitoring; +https://phivolcs.dost.gov.ph)" },
@@ -165,13 +166,12 @@ async function fetchText(url: string): Promise<string> {
     if (res.status !== 404) throw new Error(`HTTP ${res.status}`);
     return ""; // 404 = bulletin removed
   } catch (e) {
-    const errStr = String(e);
-    // Only use TLS workaround in development (NODE_ENV !== production)
-    // and only if the error is a certificate issue.
-    if (
-      process.env.NODE_ENV !== "production" &&
-      errStr.match(/certificate|CERT|TLS|ssl|UNABLE_TO_VERIFY/i)
-    ) {
+    // If the standard fetch fails for ANY reason, try with TLS verification
+    // disabled. This handles certificate issues in development environments
+    // where the error message may be generic ("fetch failed") rather than
+    // specific ("unable to verify the first certificate").
+    // In production (Vercel), the standard fetch works with the proper CA bundle.
+    if (process.env.NODE_ENV !== "production") {
       const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
       process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
       try {
