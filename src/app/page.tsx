@@ -268,12 +268,22 @@ export default function Home() {
 
         {/* Right detail panel (desktop) — ONLY when an earthquake is selected */}
         {isMap && hasSelection && (
-          <aside className="absolute top-3 bottom-3 z-20 hidden w-96 md:block" style={{ right: "calc(3rem + 1.5rem)" }}>
+          <aside
+            className="absolute z-20 hidden w-96 md:flex"
+            style={{
+              right: "calc(3rem + 1.5rem)",
+              top: "12px",
+              bottom: "12px",
+              display: "flex",
+              flexDirection: "column",
+              maxHeight: "calc(100% - 24px)",
+            }}
+          >
             <DetailPanel
               earthquake={selectedFull ?? selected}
               loading={selLoading}
               onClose={() => select(null)}
-              className="h-full"
+              className="flex-1 min-h-0"
             />
           </aside>
         )}

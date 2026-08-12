@@ -75,7 +75,7 @@ export function DetailPanel({ earthquake, loading, onClose, className }: Props) 
   const viewOnMap = () => setView("live");
 
   return (
-    <div className={cn("glass-strong rounded-lg flex flex-col overflow-hidden h-full max-h-full", className)}>
+    <div className={cn("glass-strong rounded-lg flex flex-col overflow-hidden", className)} style={{ height: "100%", maxHeight: "100%" }}>
       {/* header — fixed, does not scroll */}
       <div className="flex shrink-0 items-start gap-3 border-b border-border p-3">
         <div className="flex-1 min-w-0">
